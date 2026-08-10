@@ -1179,6 +1179,27 @@ Posting `{}` schedules a template on its own suggested cadence with its declared
 
 Vibe-Trading exposes 70 MCP tools for any MCP-compatible client. Runs as a stdio subprocess — no server setup needed. Core research tools work with zero API keys for HK/US/crypto; trading connector tools use the selected connector profile, and `run_swarm` needs an LLM key.
 
+### Codex local plugin and `@Vibe-Trading`
+
+This repository includes a tool-only Codex plugin under `plugins/vibe-trading`
+and a repo marketplace at `.agents/plugins/marketplace.json`. It reuses the
+same 64-tool stdio MCP server; it does not add a separate web service or custom
+chat widget.
+
+Install the current checkout as a user-visible CLI, then add the repo
+marketplace and plugin:
+
+```bash
+uv tool install --editable .
+codex plugin marketplace add /absolute/path/to/Vibe-Trading
+codex plugin add vibe-trading@vibe-trading-local
+```
+
+Restart the ChatGPT desktop app, start a new Codex task, type `@`, and select
+**Vibe-Trading**. The plugin fails fast if `vibe-trading-mcp` is not available
+on `PATH`. After changing the plugin manifest or MCP metadata, reinstall the
+plugin and start a new task so Codex reloads the descriptors.
+
 **Environment variables:** the client spawns the server itself, so a shell `export` never reaches it — set them in the client's `env` block. Generated backtest code is sandboxed to the allowed run roots, so writing results into a workspace of your own needs `VIBE_TRADING_ALLOWED_RUN_ROOTS`:
 
 ```json

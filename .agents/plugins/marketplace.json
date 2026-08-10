@@ -1,0 +1,20 @@
+{
+  "name": "vibe-trading-local",
+  "interface": {
+    "displayName": "Vibe-Trading Local"
+  },
+  "plugins": [
+    {
+      "name": "vibe-trading",
+      "source": {
+        "source": "local",
+        "path": "./plugins/vibe-trading"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Finance"
+    }
+  ]
+}

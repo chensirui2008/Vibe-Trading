@@ -1129,6 +1129,25 @@ POST `{}` 即按模板自身的建议节奏和默认变量排程。渲染后的�
 
 Vibe-Trading 为任何 MCP-compatible client 暴露 70 个 MCP tools。它作为 stdio subprocess 运行，无需 server setup。核心 research tools 对港股/美股/加密零 API key 可用；trading connector tools 使用当前选择的 connector profile；只有 `run_swarm` 需要 LLM key。
 
+### Codex 本地插件与 `@Vibe-Trading`
+
+仓库已在 `plugins/vibe-trading` 中提供 tool-only Codex 插件，并在
+`.agents/plugins/marketplace.json` 中提供仓库级 marketplace。插件直接复用
+现有 64 工具的 stdio MCP Server，不额外启动 Web 服务，也不包含对话内自定义卡片。
+
+先把当前 checkout 安装为用户可见的 CLI，再添加本仓库 marketplace 和插件：
+
+```bash
+uv tool install --editable .
+codex plugin marketplace add /absolute/path/to/Vibe-Trading
+codex plugin add vibe-trading@vibe-trading-local
+```
+
+重启 ChatGPT 桌面端，新建 Codex 任务，输入 `@` 并选择
+**Vibe-Trading**。如果 `PATH` 中找不到 `vibe-trading-mcp`，插件会直接报错，
+不会静默降级。修改插件清单或 MCP 元数据后，应重新安装插件并新建任务，
+让 Codex 重新加载工具描述。
+
 **环境变量：** server 由 client 自己 spawn，因此在 shell 里 `export` 永远传不进去 —— 请写在 client 的 `env` 块里。生成的回测代码被限制在 allowed run roots 内，所以要把结果写进你自己的工作目录，需要 `VIBE_TRADING_ALLOWED_RUN_ROOTS`：
 
 ```json

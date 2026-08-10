@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vibe-trading": {
+      "command": "vibe-trading-mcp",
+      "args": [],
+      "tool_timeout_sec": 900
+    }
+  }
+}

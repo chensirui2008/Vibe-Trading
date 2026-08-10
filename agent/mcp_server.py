@@ -80,7 +80,22 @@ from src.market_data import (
     get_loader,
 )
 
-mcp = FastMCP("Vibe-Trading", version=APP_VERSION)
+MCP_INSTRUCTIONS = (
+    "Vibe-Trading provides research, market-data, backtesting, portfolio-analysis, "
+    "and read-only broker inspection tools. It never exposes order placement or "
+    "cancellation. Resolve ambiguous symbols with search_symbol before market-data "
+    "calls. Use list_skills before load_skill. QVeris execution may be billable: "
+    "call qveris_search and qveris_inspect first and do not call qveris_execute "
+    "unless the user requested paid data execution. Never describe research output "
+    "as personalized financial advice."
+)
+
+mcp = FastMCP(
+    "Vibe-Trading",
+    version=APP_VERSION,
+    instructions=MCP_INSTRUCTIONS,
+    website_url="https://vibetrading.wiki/",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +114,87 @@ _goal_store = None
 # VIBE_TRADING_ENABLE_SHELL_TOOLS env var. Keeping the module-level default off
 # means an ASGI/import deployment that never calls main() also stays safe.
 _include_shell_tools = False
+
+
+# MCP annotations are part of the plugin's user-facing safety contract.  Most
+# Vibe-Trading tools are deterministic reads.  The names below are the bounded
+# set that persist local research state, launch work, overwrite files, or incur
+# an external charge.  Keeping the exception list centralized makes a newly
+# added tool fail closed into the non-read-only category until it is reviewed.
+_READ_ONLY_MCP_TOOLS = {
+    "list_skills",
+    "load_skill",
+    "get_research_goal",
+    "analyze_options",
+    "analyze_options_payoff",
+    "pattern_recognition",
+    "read_url",
+    "read_document",
+    "web_search",
+    "read_file",
+    "trading_connections",
+    "trading_check",
+    "trading_account",
+    "trading_positions",
+    "trading_orders",
+    "trading_quote",
+    "trading_history",
+    "list_swarm_presets",
+    "get_market_data",
+    "get_fund_flow",
+    "get_dragon_tiger",
+    "get_northbound_flow",
+    "get_margin_trading",
+    "get_block_trades",
+    "get_shareholder_count",
+    "get_lockup_expiry",
+    "get_sector_info",
+    "get_research_reports",
+    "get_stock_news",
+    "get_sec_filings",
+    "get_financial_statements",
+    "get_options_chain",
+    "get_stock_profile",
+    "screen_market",
+    "search_symbol",
+    "get_macro_series",
+    "iwencai_search",
+    "qveris_search",
+    "qveris_inspect",
+    "get_institutional_holdings",
+    "etf_holdings",
+    "prediction_market",
+    "research_papers",
+    "get_swarm_status",
+    "get_run_result",
+    "list_runs",
+    "analyze_trade_journal",
+    "scan_shadow_signals",
+    "alpha_zoo",
+}
+
+_DESTRUCTIVE_MCP_TOOLS = {"write_file", "qveris_execute"}
+_OPEN_WORLD_MCP_TOOLS = {"qveris_execute"}
+
+
+def _plugin_tool(fn):
+    """Register one MCP tool with complete Codex plugin metadata.
+
+    Unknown tools deliberately default to ``readOnlyHint=False`` so a future
+    state-changing function cannot be mislabeled as a harmless read merely
+    because its annotation was forgotten.
+    """
+    name = fn.__name__
+    read_only = name in _READ_ONLY_MCP_TOOLS
+    return mcp.tool(
+        title=name.replace("_", " ").title(),
+        annotations={
+            "readOnlyHint": read_only,
+            "destructiveHint": name in _DESTRUCTIVE_MCP_TOOLS,
+            "idempotentHint": read_only,
+            "openWorldHint": name in _OPEN_WORLD_MCP_TOOLS,
+        },
+    )(fn)
 
 
 def _env_shell_tools_enabled() -> bool:
@@ -494,7 +590,7 @@ def _risk_tier_from_text(value: str):
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def list_skills() -> str:
     """List all available finance skills with names and descriptions.
 
@@ -506,7 +602,7 @@ def list_skills() -> str:
     return json.dumps(skills, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+@_plugin_tool
 def load_skill(name: str) -> str:
     """Load full documentation for a named finance skill.
 
@@ -529,7 +625,7 @@ def load_skill(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def start_research_goal(
     objective: str,
     session_id: str = "",
@@ -579,7 +675,7 @@ def start_research_goal(
         return _json_error(str(exc), error_type="validation")
 
 
-@mcp.tool
+@_plugin_tool
 def get_research_goal(session_id: str = "") -> str:
     """Return the current finance research goal snapshot for a session.
 
@@ -596,7 +692,7 @@ def get_research_goal(session_id: str = "") -> str:
     return _json_ok(snapshot=snapshot)
 
 
-@mcp.tool
+@_plugin_tool
 def add_goal_evidence(
     goal_id: str,
     expected_goal_id: str,
@@ -692,7 +788,7 @@ def add_goal_evidence(
         return _json_error(str(exc), error_type="validation")
 
 
-@mcp.tool
+@_plugin_tool
 def update_research_goal_status(
     goal_id: str,
     expected_goal_id: str,
@@ -742,7 +838,7 @@ def update_research_goal_status(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def backtest(run_dir: str) -> str:
     """Run a vectorized backtest using config.json and code/signal_engine.py.
 
@@ -773,7 +869,7 @@ def backtest(run_dir: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def factor_analysis(
     factor_csv: str,
     return_csv: str,
@@ -803,7 +899,7 @@ def factor_analysis(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def alpha_zoo(
     action: str,
     alpha_id: str | None = None,
@@ -835,7 +931,7 @@ def alpha_zoo(
     return registry.execute("alpha_zoo", params)
 
 
-@mcp.tool
+@_plugin_tool
 def alpha_bench(
     universe: str,
     period: str,
@@ -943,7 +1039,7 @@ def alpha_bench(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def analyze_options(
     spot: float,
     strike: float,
@@ -976,7 +1072,7 @@ def analyze_options(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def analyze_options_payoff(
     legs: _lenient_dict_list,
     entry_spot: float,
@@ -1039,7 +1135,7 @@ def analyze_options_payoff(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def pattern_recognition(run_dir: str) -> str:
     """Detect technical chart patterns (head-and-shoulders, double top/bottom,
     triangles, wedges, channels) in OHLCV data.
@@ -1059,7 +1155,7 @@ def pattern_recognition(run_dir: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def read_url(url: str) -> str:
     """Fetch a web page and convert it to clean Markdown text.
 
@@ -1074,7 +1170,7 @@ def read_url(url: str) -> str:
     return _read_url(url)
 
 
-@mcp.tool
+@_plugin_tool
 def read_document(file_path: str) -> str:
     """Extract text from a PDF document with OCR fallback for scanned pages.
 
@@ -1093,7 +1189,7 @@ def read_document(file_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web via DuckDuckGo and return top results.
 
@@ -1119,7 +1215,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def write_file(path: str, content: str) -> str:
     """Write content to a file. Used to create config.json and signal_engine.py
     for backtesting workflows.
@@ -1132,7 +1228,7 @@ def write_file(path: str, content: str) -> str:
     return registry.execute("write_file", {"path": path, "content": content})
 
 
-@mcp.tool
+@_plugin_tool
 def read_file(path: str) -> str:
     """Read the contents of a file.
 
@@ -1171,7 +1267,7 @@ def _trading_common_args(
     return payload
 
 
-@mcp.tool
+@_plugin_tool
 def trading_connections() -> str:
     """List selectable trading connector profiles.
 
@@ -1182,7 +1278,7 @@ def trading_connections() -> str:
     return registry.execute("trading_connections", {})
 
 
-@mcp.tool
+@_plugin_tool
 def trading_select_connection(connection: str) -> str:
     """Select the default trading connector profile for later trading_* calls.
 
@@ -1193,7 +1289,7 @@ def trading_select_connection(connection: str) -> str:
     return registry.execute("trading_select_connection", {"connection": connection})
 
 
-@mcp.tool
+@_plugin_tool
 def trading_check(
     connection: str | None = None,
     host: str | None = None,
@@ -1221,7 +1317,7 @@ def trading_check(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def trading_account(
     connection: str | None = None,
     host: str | None = None,
@@ -1245,7 +1341,7 @@ def trading_account(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def trading_positions(
     connection: str | None = None,
     host: str | None = None,
@@ -1269,7 +1365,7 @@ def trading_positions(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def trading_orders(
     connection: str | None = None,
     host: str | None = None,
@@ -1296,7 +1392,7 @@ def trading_orders(
     return registry.execute("trading_orders", params)
 
 
-@mcp.tool
+@_plugin_tool
 def trading_quote(
     symbol: str,
     connection: str | None = None,
@@ -1327,7 +1423,7 @@ def trading_quote(
     return registry.execute("trading_quote", params)
 
 
-@mcp.tool
+@_plugin_tool
 def trading_history(
     symbol: str,
     connection: str | None = None,
@@ -1388,7 +1484,7 @@ def trading_history(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def list_swarm_presets() -> str:
     """List available swarm multi-agent team presets.
 
@@ -1402,7 +1498,7 @@ def list_swarm_presets() -> str:
     return json.dumps(presets, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+@_plugin_tool
 async def run_swarm(
     preset_name: str,
     variables: _lenient_dict_str_str,
@@ -1541,7 +1637,7 @@ def _cap_rows(records: list, max_rows: int) -> list | dict[str, object]:
     return cap_rows(records, max_rows)
 
 
-@mcp.tool
+@_plugin_tool
 def get_market_data(
     codes: _lenient_str_list,
     start_date: str,
@@ -1664,7 +1760,7 @@ def _execute_key_gated(name: str, params: dict[str, Any]) -> str:
     return tool_cls().execute(**params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_fund_flow(codes: _lenient_str_list, period: str = "daily", days: int = 30) -> str:
     """Fetch order-bucket net capital inflow (main/super-large/large/medium/small).
 
@@ -1682,7 +1778,7 @@ def get_fund_flow(codes: _lenient_str_list, period: str = "daily", days: int = 3
     return registry.execute("get_fund_flow", {"codes": codes, "period": period, "days": days})
 
 
-@mcp.tool
+@_plugin_tool
 def get_dragon_tiger(date: str, code: str | None = None) -> str:
     """Fetch the A-share dragon-tiger board (龙虎榜) for a trade date (Eastmoney).
 
@@ -1701,7 +1797,7 @@ def get_dragon_tiger(date: str, code: str | None = None) -> str:
     return registry.execute("get_dragon_tiger", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_northbound_flow(lookback_days: int = 30) -> str:
     """Fetch Northbound (Stock-Connect) net capital flow for China A-shares.
 
@@ -1716,7 +1812,7 @@ def get_northbound_flow(lookback_days: int = 30) -> str:
     return registry.execute("get_northbound_flow", {"lookback_days": lookback_days})
 
 
-@mcp.tool
+@_plugin_tool
 def get_margin_trading(code: str, days: int = 30) -> str:
     """Fetch an A-share stock's daily margin-trading (融资融券) balances (Eastmoney).
 
@@ -1733,7 +1829,7 @@ def get_margin_trading(code: str, days: int = 30) -> str:
     return registry.execute("get_margin_trading", {"code": code, "days": days})
 
 
-@mcp.tool
+@_plugin_tool
 def get_block_trades(code: str, days: int = 30) -> str:
     """Fetch recent A-share block trades (大宗交易) for one symbol (Eastmoney).
 
@@ -1749,7 +1845,7 @@ def get_block_trades(code: str, days: int = 30) -> str:
     return registry.execute("get_block_trades", {"code": code, "days": days})
 
 
-@mcp.tool
+@_plugin_tool
 def get_shareholder_count(code: str, max_periods: int = 24) -> str:
     """Fetch mainland A-share quarterly shareholder count (股东户数) (Eastmoney).
 
@@ -1765,7 +1861,7 @@ def get_shareholder_count(code: str, max_periods: int = 24) -> str:
     return registry.execute("get_shareholder_count", {"code": code, "max_periods": max_periods})
 
 
-@mcp.tool
+@_plugin_tool
 def get_lockup_expiry(code: str | None = None, horizon_days: int = 90) -> str:
     """Fetch Chinese A-share lockup-expiry (restricted-share unlock, 限售解禁) data.
 
@@ -1787,7 +1883,7 @@ def get_lockup_expiry(code: str | None = None, horizon_days: int = 90) -> str:
     return registry.execute("get_lockup_expiry", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_sector_info(code: str | None = None, mode: str = "membership", limit: int = 30) -> str:
     """Look up Chinese A-share sector / concept board info (Eastmoney, no auth).
 
@@ -1809,7 +1905,7 @@ def get_sector_info(code: str | None = None, mode: str = "membership", limit: in
     return registry.execute("get_sector_info", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_research_reports(code: str, limit: int = 20) -> str:
     """Fetch mainland A-share sell-side research coverage and consensus forecasts.
 
@@ -1826,7 +1922,7 @@ def get_research_reports(code: str, limit: int = 20) -> str:
     return registry.execute("get_research_reports", {"code": code, "limit": limit})
 
 
-@mcp.tool
+@_plugin_tool
 def get_stock_news(code: str | None = None, scope: str = "stock", limit: int = 20) -> str:
     """Fetch recent financial news headlines, read-only and no auth.
 
@@ -1848,7 +1944,7 @@ def get_stock_news(code: str | None = None, scope: str = "stock", limit: int = 2
     return registry.execute("get_stock_news", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_sec_filings(
     ticker: str,
     form: str | None = None,
@@ -1877,7 +1973,7 @@ def get_sec_filings(
     return registry.execute("get_sec_filings", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual") -> str:
     """Fetch a stock's financial statements or key per-period indicators.
 
@@ -1897,7 +1993,7 @@ def get_financial_statements(code: str, statement: str = "indicators", period: s
     )
 
 
-@mcp.tool
+@_plugin_tool
 def get_options_chain(ticker: str, expiration: int | None = None) -> str:
     """Fetch the US-listed options chain (calls and puts) for one expiration.
 
@@ -1917,7 +2013,7 @@ def get_options_chain(ticker: str, expiration: int | None = None) -> str:
     return registry.execute("get_options_chain", params)
 
 
-@mcp.tool
+@_plugin_tool
 def get_stock_profile(ticker: str, sections: _lenient_str_list_opt = None) -> str:
     """Fetch a read-only company profile for a US or HK listing (Yahoo Finance).
 
@@ -1940,7 +2036,7 @@ def get_stock_profile(ticker: str, sections: _lenient_str_list_opt = None) -> st
     return registry.execute("get_stock_profile", params)
 
 
-@mcp.tool
+@_plugin_tool
 def screen_market(market: str, sort_by: str = "change_pct", top_n: int = 30) -> str:
     """Screen a market's listed instruments and rank the top names by a metric.
 
@@ -1958,7 +2054,7 @@ def screen_market(market: str, sort_by: str = "change_pct", top_n: int = 30) -> 
     return registry.execute("screen_market", {"market": market, "sort_by": sort_by, "top_n": top_n})
 
 
-@mcp.tool
+@_plugin_tool
 def search_symbol(query: str, limit: int = 10) -> str:
     """Resolve a company name or ticker fragment to candidate trading symbols.
 
@@ -1976,7 +2072,7 @@ def search_symbol(query: str, limit: int = 10) -> str:
     return registry.execute("search_symbol", {"query": query, "limit": limit})
 
 
-@mcp.tool
+@_plugin_tool
 def get_macro_series(
     series_id: str,
     start_date: str | None = None,
@@ -2005,7 +2101,7 @@ def get_macro_series(
     return _execute_key_gated("get_macro_series", params)
 
 
-@mcp.tool
+@_plugin_tool
 def iwencai_search(query: str, limit: int = 20) -> str:
     """Run a natural-language A-share research query against iWenCai (问财).
 
@@ -2023,7 +2119,7 @@ def iwencai_search(query: str, limit: int = 20) -> str:
     return _execute_key_gated("iwencai_search", {"query": query, "limit": limit})
 
 
-@mcp.tool
+@_plugin_tool
 def qveris_search(query: str, limit: int = 20, session_id: str | None = None) -> str:
     """Search the QVeris premium data/tool marketplace for capabilities.
 
@@ -2046,7 +2142,7 @@ def qveris_search(query: str, limit: int = 20, session_id: str | None = None) ->
     return _execute_key_gated("qveris_search", params)
 
 
-@mcp.tool
+@_plugin_tool
 def qveris_inspect(
     tool_ids: list[str],
     search_id: str | None = None,
@@ -2074,7 +2170,7 @@ def qveris_inspect(
     return _execute_key_gated("qveris_inspect", params)
 
 
-@mcp.tool
+@_plugin_tool
 def qveris_execute(
     tool_id: str,
     parameters: dict[str, Any],
@@ -2285,6 +2381,7 @@ def _register_mirrored_tool(tool_cls: Any) -> bool:
 
     try:
         from fastmcp.tools import FunctionTool
+        from mcp.types import ToolAnnotations
 
         schema = deepcopy(getattr(tool_cls, "parameters", None)) or {
             "type": "object",
@@ -2300,9 +2397,16 @@ def _register_mirrored_tool(tool_cls: Any) -> bool:
             FunctionTool(
                 fn=_call,
                 name=name,
+                title=name.replace("_", " ").title(),
                 description=tool_cls.description,
                 parameters=schema,
                 output_schema=_string_result_output_schema(),
+                annotations=ToolAnnotations(
+                    readOnlyHint=True,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                    openWorldHint=False,
+                ),
                 return_type=str,
             )
         )
@@ -2380,7 +2484,7 @@ def _build_run_payload(store, run_id: str, preset_name: str | None, *, timed_out
     return payload
 
 
-@mcp.tool
+@_plugin_tool
 def get_swarm_status(run_id: str) -> str:
     """Get the current status of a swarm run.
 
@@ -2405,7 +2509,7 @@ def get_swarm_status(run_id: str) -> str:
     )
 
 
-@mcp.tool
+@_plugin_tool
 def get_run_result(run_id: str) -> str:
     """Get the final report and task summaries of a swarm run.
 
@@ -2430,7 +2534,7 @@ def get_run_result(run_id: str) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+@_plugin_tool
 def list_runs(limit: int = 20) -> str:
     """List recent swarm runs sorted by creation time (newest first).
 
@@ -2467,7 +2571,7 @@ def list_runs(limit: int = 20) -> str:
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+@_plugin_tool
 def reap_stale_runs() -> str:
     """Mark every ``running`` run whose host process died as ``failed``.
 
@@ -2484,7 +2588,7 @@ def reap_stale_runs() -> str:
     return json.dumps({"reaped": reaped}, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+@_plugin_tool
 def retry_run(run_id: str) -> str:
     """Retry a failed, stale, or cancelled swarm run.
 
@@ -2546,7 +2650,7 @@ def retry_run(run_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def analyze_trade_journal(
     file_path: str,
     analysis_type: str = "full",
@@ -2584,7 +2688,7 @@ def analyze_trade_journal(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@_plugin_tool
 def extract_shadow_strategy(
     journal_path: str,
     min_support: int = 3,
@@ -2613,7 +2717,7 @@ def extract_shadow_strategy(
     )
 
 
-@mcp.tool
+@_plugin_tool
 def run_shadow_backtest(
     shadow_id: str,
     window_start: str = "",
@@ -2650,7 +2754,7 @@ def run_shadow_backtest(
     return registry.execute("run_shadow_backtest", params)
 
 
-@mcp.tool
+@_plugin_tool
 def render_shadow_report(
     shadow_id: str,
     include_today_signals: bool = True,
@@ -2682,7 +2786,7 @@ def render_shadow_report(
     return registry.execute("render_shadow_report", params)
 
 
-@mcp.tool
+@_plugin_tool
 def scan_shadow_signals(
     shadow_id: str,
     date: str = "",

@@ -44,6 +44,7 @@ CALL_TIMEOUT = 15.0
 # assert ``>= 30`` so unrelated tool additions / removals don't break the
 # test, but a regression that drops half the catalogue still fires.
 EXPECTED_MIN_TOOL_COUNT = 30
+PLUGIN_TOOL_COUNT = 64
 REQUIRED_TOOL_NAMES = {
     "analyze_options",
     "get_market_data",
@@ -177,6 +178,10 @@ def test_mcp_server_happy_path() -> None:
             f"initialize did not respond within {INIT_TIMEOUT}s (status={info})"
         )
         assert "result" in resp, f"initialize returned an error response: {resp}"
+        assert resp["result"].get("serverInfo", {}).get("name") == "Vibe-Trading"
+        assert "never exposes order placement" in resp["result"].get(
+            "instructions", ""
+        )
 
         # Required handshake step before any further request.
         _send(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -189,12 +194,45 @@ def test_mcp_server_happy_path() -> None:
             f"tools/list did not respond within {INIT_TIMEOUT}s (status={info})"
         )
         tools = resp.get("result", {}).get("tools") or []
+        assert len(tools) == PLUGIN_TOOL_COUNT, (
+            f"Codex plugin contract advertises {PLUGIN_TOOL_COUNT} tools, got {len(tools)}"
+        )
         assert len(tools) >= EXPECTED_MIN_TOOL_COUNT, (
             f"expected at least {EXPECTED_MIN_TOOL_COUNT} tools, got {len(tools)}"
         )
         tool_names = {t["name"] for t in tools}
         missing = REQUIRED_TOOL_NAMES - tool_names
         assert not missing, f"required tools missing from catalogue: {sorted(missing)}"
+
+        # Codex relies on titles and annotations for tool presentation,
+        # confirmation, and policy.  Missing metadata must fail loudly instead
+        # of silently treating a state-changing tool as a harmless read.
+        for tool in tools:
+            assert tool.get("title"), f"tool title missing: {tool['name']}"
+            annotations = tool.get("annotations") or {}
+            for field in (
+                "readOnlyHint",
+                "destructiveHint",
+                "idempotentHint",
+                "openWorldHint",
+            ):
+                assert field in annotations, f"{field} missing: {tool['name']}"
+
+        by_name = {tool["name"]: tool for tool in tools}
+        assert by_name["get_market_data"]["annotations"] == {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+        assert by_name["write_file"]["annotations"]["readOnlyHint"] is False
+        assert by_name["write_file"]["annotations"]["destructiveHint"] is True
+        assert by_name["qveris_execute"]["annotations"] == {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
 
         # 3. tools/call analyze_options — pure CPU Black-Scholes; no network.
         # If this hangs, the cause is the registry build deadlock, not a
