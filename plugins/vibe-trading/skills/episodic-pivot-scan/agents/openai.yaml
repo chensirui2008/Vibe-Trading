@@ -1,0 +1,7 @@
+interface:
+  display_name: "Episodic Pivot Scan"
+  short_description: "Scan US stocks for event-driven EP repricing setups"
+  default_prompt: "Use $episodic-pivot-scan to find evidence-backed US event-driven trading candidates."
+
+policy:
+  allow_implicit_invocation: true
