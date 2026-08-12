@@ -1,6 +1,6 @@
 {
   "name": "vibe-trading",
-  "version": "0.1.13+codex.20260812124818",
+  "version": "0.1.13+codex.20260812141537",
   "description": "Finance research, market data, backtesting, and portfolio analysis in Codex.",
   "author": {
     "name": "HKUDS",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Vibe-Trading",
     "shortDescription": "Finance research and backtesting tools for Codex.",
-    "longDescription": "Use Vibe-Trading's 64 MCP tools for cross-market data, fundamentals, quantitative research, backtesting, research goals, journal analysis, shadow accounts, and read-only broker inspection. The plugin does not expose order placement or cancellation.",
+    "longDescription": "Use Vibe-Trading's 71 MCP tools for cross-market data, momentum screening, fundamentals, quantitative research, backtesting, research goals, journal analysis, shadow accounts, and read-only broker inspection. The plugin does not expose order placement or cancellation.",
     "developerName": "HKUDS",
     "category": "Finance",
     "capabilities": [

@@ -6,13 +6,13 @@ Zero API key required for HK/US/crypto research markets (yfinance, OKX,
 AKShare are free). Trading connector tools are profile-scoped and require the
 selected connector's own local app or OAuth setup.
 
-Surfaces 70 tools: skills, research goals, backtest/factor/options/pattern
+Surfaces 71 tools: skills, research goals, backtest/factor/options/pattern
 analysis, market data, fundamentals & capital-flow & news & discovery
 (get_fund_flow / get_dragon_tiger / get_northbound_flow / get_margin_trading /
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
 get_research_reports / get_stock_news / get_sec_filings /
 get_financial_statements / get_options_chain / get_stock_profile /
-screen_market / search_symbol / get_macro_series / iwencai_search /
+screen_market / screen_momentum / search_symbol / get_macro_series / iwencai_search /
 qveris_search / qveris_inspect / qveris_execute),
 institutional-research and alternative data (get_institutional_holdings /
 etf_holdings / prediction_market / research_papers), read-only finance math and
@@ -156,6 +156,7 @@ _READ_ONLY_MCP_TOOLS = {
     "get_options_chain",
     "get_stock_profile",
     "screen_market",
+    "screen_momentum",
     "search_symbol",
     "get_macro_series",
     "iwencai_search",
@@ -174,7 +175,7 @@ _READ_ONLY_MCP_TOOLS = {
 }
 
 _DESTRUCTIVE_MCP_TOOLS = {"write_file", "qveris_execute"}
-_OPEN_WORLD_MCP_TOOLS = {"qveris_execute"}
+_OPEN_WORLD_MCP_TOOLS = {"qveris_execute", "screen_momentum"}
 
 
 def _plugin_tool(fn):
@@ -2052,6 +2053,31 @@ def screen_market(market: str, sort_by: str = "change_pct", top_n: int = 30) -> 
     """
     registry = _get_registry()
     return registry.execute("screen_market", {"market": market, "sort_by": sort_by, "top_n": top_n})
+
+
+@_plugin_tool
+def screen_momentum(
+    as_of: str,
+    universe: str = "sp500",
+    symbols: _lenient_str_list_opt = None,
+) -> str:
+    """Rank U.S. stocks by 21/63/126-session adjusted returns.
+
+    Uses the current S&P 500 constituent proxy by default, or a caller-supplied
+    symbol list. Returns the union of each horizon's top 2%, marking names that
+    enter any top 1% bucket, plus rank denominators and coverage failures. It
+    does not detect bases or pivots.
+
+    Args:
+        as_of: Inclusive cutoff date in YYYY-MM-DD format.
+        universe: ``sp500`` for the current-constituent proxy.
+        symbols: Optional custom U.S. symbols; overrides ``universe``.
+    """
+    params: dict[str, Any] = {"as_of": as_of, "universe": universe}
+    clean_symbols = _clean_list(symbols)
+    if clean_symbols:
+        params["symbols"] = clean_symbols
+    return _get_registry().execute("screen_momentum", params)
 
 
 @_plugin_tool

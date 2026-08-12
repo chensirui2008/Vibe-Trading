@@ -34,6 +34,9 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "10–42",
         "3-3 pivot",
         "screen_market",
+        "screen_momentum",
+        'universe="sp500"',
+        "当前 S&P 500 成分代理排名",
         "failed_symbols",
     )
     for marker in required:

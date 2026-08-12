@@ -131,7 +131,7 @@ Comprehensive knowledge base covering:
 
 Use `load_skill(name)` to access full methodology docs with code templates.
 
-## Available MCP Tools (70)
+## Available MCP Tools (71)
 
 | Tool | Description | API Key |
 |------|-------------|---------|
@@ -164,6 +164,7 @@ Use `load_skill(name)` to access full methodology docs with code templates.
 | `get_options_chain` | Options chain (strikes, IV, OI, Greeks) | None* |
 | `get_stock_profile` | Valuation, analyst estimates & institutional holdings (US/HK) | None |
 | `screen_market` | Market screener with fundamental/technical filters | None* |
+| `screen_momentum` | Rank current S&P 500 proxy or custom U.S. symbols by 21/63/126-session adjusted returns | None* |
 | `search_symbol` | Symbol / ticker search across markets | None |
 | `get_macro_series` | FRED macroeconomic series | FRED_API_KEY |
 | `iwencai_search` | A-share natural-language research search | IWENCAI_KEY |
