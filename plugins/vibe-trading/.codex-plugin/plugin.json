@@ -1,6 +1,6 @@
 {
   "name": "vibe-trading",
-  "version": "0.1.13",
+  "version": "0.1.13+codex.20260812121857",
   "description": "Finance research, market data, backtesting, and portfolio analysis in Codex.",
   "author": {
     "name": "HKUDS",
@@ -17,6 +17,7 @@
     "market-data",
     "research"
   ],
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Vibe-Trading",
@@ -30,7 +31,7 @@
     ],
     "websiteURL": "https://vibetrading.wiki/",
     "defaultPrompt": [
-      "Use Vibe-Trading to research AAPL and summarize the evidence.",
+      "Use breakout-scan to screen US stocks for Qullamaggie breakout candidates.",
       "Use Vibe-Trading to backtest a BTC-USDT strategy.",
       "Use Vibe-Trading to analyze my trade journal."
     ],

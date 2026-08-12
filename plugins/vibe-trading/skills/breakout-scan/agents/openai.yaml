@@ -1,0 +1,7 @@
+interface:
+  display_name: "Breakout Scan"
+  short_description: "Scan US stocks for Qullamaggie breakout setups"
+  default_prompt: "Use $breakout-scan to build an evidence-backed US breakout watchlist."
+
+policy:
+  allow_implicit_invocation: true
