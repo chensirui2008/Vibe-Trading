@@ -38,6 +38,13 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         'universe="sp500"',
         "当前 S&P 500 成分代理排名",
         "failed_symbols",
+        "max_drawdown <= 15%",
+        "max(high) / min(low) - 1 <= 20%",
+        "normalized_TR = true_range / previous_close",
+        "前20日中位数的2倍",
+        "Pivot 距当前不得超过 15 个交易日",
+        "pass/fail/unknown",
+        "不得把未知当通过",
     )
     for marker in required:
         assert marker in text
