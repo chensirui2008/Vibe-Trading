@@ -42,13 +42,21 @@ def test_wrapper_forwards_default_and_custom_universes(monkeypatch) -> None:
     _SCREEN(as_of="2026-08-10", symbols=["AAPL", "MSFT.US"])
 
     assert registry.calls == [
-        ("screen_momentum", {"as_of": "2026-08-10", "universe": "sp500"}),
+        (
+            "screen_momentum",
+            {
+                "as_of": "2026-08-10",
+                "universe": "sp500",
+                "candidate_pct": 2,
+            },
+        ),
         (
             "screen_momentum",
             {
                 "as_of": "2026-08-10",
                 "universe": "sp500",
                 "symbols": ["AAPL", "MSFT.US"],
+                "candidate_pct": 2,
             },
         ),
     ]

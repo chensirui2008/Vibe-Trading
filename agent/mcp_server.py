@@ -2060,20 +2060,26 @@ def screen_momentum(
     as_of: str,
     universe: str = "sp500",
     symbols: _lenient_str_list_opt = None,
+    candidate_pct: int = 2,
 ) -> str:
     """Rank U.S. stocks by 21/63/126-session adjusted returns.
 
     Uses the current S&P 500 constituent proxy by default, or a caller-supplied
-    symbol list. Returns the union of each horizon's top 2%, marking names that
-    enter any top 1% bucket, plus rank denominators and coverage failures. It
-    does not detect bases or pivots.
+    symbol list. Returns the union of each horizon's configurable top
+    percentage, while retaining top 1% and 2% labels, rank denominators, and
+    coverage failures. It does not detect bases or pivots.
 
     Args:
         as_of: Inclusive cutoff date in YYYY-MM-DD format.
         universe: ``sp500`` for the current-constituent proxy.
         symbols: Optional custom U.S. symbols; overrides ``universe``.
+        candidate_pct: Candidate breadth per horizon, from 1 through 20.
     """
-    params: dict[str, Any] = {"as_of": as_of, "universe": universe}
+    params: dict[str, Any] = {
+        "as_of": as_of,
+        "universe": universe,
+        "candidate_pct": candidate_pct,
+    }
     clean_symbols = _clean_list(symbols)
     if clean_symbols:
         params["symbols"] = clean_symbols

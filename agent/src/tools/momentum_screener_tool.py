@@ -120,7 +120,9 @@ def _default_history_fetcher(
     return fetched
 
 
-def _rank_rows(returns: pd.DataFrame) -> list[dict[str, Any]]:
+def _rank_rows(
+    returns: pd.DataFrame, *, candidate_pct: int = 2
+) -> list[dict[str, Any]]:
     metrics: dict[int, pd.DataFrame] = {}
     selected: set[str] = set()
     for horizon in _HORIZONS:
@@ -132,12 +134,19 @@ def _rank_rows(returns: pd.DataFrame) -> list[dict[str, Any]]:
         valid["top_pct"] = valid["rank"] / denominator * 100.0
         valid["top_1"] = valid["rank"] <= max(1, math.ceil(denominator * 0.01))
         valid["top_2"] = valid["rank"] <= max(1, math.ceil(denominator * 0.02))
+        valid["selected"] = valid["rank"] <= max(
+            1, math.ceil(denominator * candidate_pct / 100.0)
+        )
         metrics[horizon] = valid
-        selected.update(valid.index[valid["top_2"]])
+        selected.update(valid.index[valid["selected"]])
 
     rows: list[dict[str, Any]] = []
     for symbol in selected:
-        row: dict[str, Any] = {"symbol": symbol, "core_periods": 0}
+        row: dict[str, Any] = {
+            "symbol": symbol,
+            "core_periods": 0,
+            "preferred_periods": 0,
+        }
         best_pct = float("inf")
         for horizon in _HORIZONS:
             metric = metrics[horizon]
@@ -155,12 +164,23 @@ def _rank_rows(returns: pd.DataFrame) -> list[dict[str, Any]]:
             row[f"{prefix}_denominator"] = int(item["denominator"])
             row[f"{prefix}_top_pct"] = top_pct
             row["core_periods"] += int(bool(item["top_1"]))
+            row["preferred_periods"] += int(bool(item["top_2"]))
             best_pct = min(best_pct, top_pct)
-        row["bucket"] = "core" if row["core_periods"] else "watch"
+        if row["core_periods"]:
+            row["bucket"] = "core"
+        elif row["preferred_periods"]:
+            row["bucket"] = "watch"
+        else:
+            row["bucket"] = "broad"
         row["best_top_pct"] = best_pct
         rows.append(row)
     rows.sort(
-        key=lambda row: (-row["core_periods"], row["best_top_pct"], row["symbol"])
+        key=lambda row: (
+            -row["core_periods"],
+            -row["preferred_periods"],
+            row["best_top_pct"],
+            row["symbol"],
+        )
     )
     return rows
 
@@ -172,8 +192,9 @@ class MomentumScreenerTool(BaseTool):
     description = (
         "Read-only U.S. equity momentum screen. Resolves the current S&P 500 "
         "proxy or an explicit symbol list, fetches adjusted daily closes in "
-        "batches, and returns the union of each horizon's top 2% for 21, 63, "
-        "and 126 sessions with ranks, denominators, coverage, and failures. "
+        "batches, and returns the union of each horizon's configurable top "
+        "percentage for 21, 63, and 126 sessions with ranks, denominators, "
+        "coverage, and failures. Top 1% and 2% labels are always retained. "
         "Requires an explicit as_of date. It does not detect chart bases or pivots."
     )
     parameters = {
@@ -197,6 +218,16 @@ class MomentumScreenerTool(BaseTool):
                     "this custom universe replaces the S&P 500 proxy."
                 ),
             },
+            "candidate_pct": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "default": 2,
+                "description": (
+                    "Return the union of names inside this top percentage in "
+                    "any horizon. Top 1% and 2% labels remain unchanged."
+                ),
+            },
         },
         "required": ["as_of"],
         "additionalProperties": False,
@@ -217,6 +248,14 @@ class MomentumScreenerTool(BaseTool):
         self._history_fetcher = history_fetcher or _default_history_fetcher
 
     def execute(self, **kwargs: Any) -> str:
+        candidate_pct = kwargs.get("candidate_pct", 2)
+        if (
+            isinstance(candidate_pct, bool)
+            or not isinstance(candidate_pct, int)
+            or not 1 <= candidate_pct <= 20
+        ):
+            return _error("candidate_pct must be an integer from 1 to 20")
+
         raw_as_of = kwargs.get("as_of")
         try:
             as_of = pd.Timestamp(raw_as_of).normalize()
@@ -388,8 +427,10 @@ class MomentumScreenerTool(BaseTool):
             "duplicate_symbols": sorted(set(duplicate_symbols)),
             "horizons": list(_HORIZONS),
             "selection": (
-                "union of each horizon's top 2%; core if top 1% in any horizon"
+                f"union of each horizon's top {candidate_pct}%; "
+                "core if top 1% and watch if top 2% in any horizon"
             ),
-            "candidates": _rank_rows(returns),
+            "candidate_pct": candidate_pct,
+            "candidates": _rank_rows(returns, candidate_pct=candidate_pct),
         }
         return json.dumps(payload, ensure_ascii=False, allow_nan=False)

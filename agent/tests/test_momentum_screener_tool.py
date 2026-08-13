@@ -68,6 +68,41 @@ def test_small_custom_universe_keeps_first_for_each_horizon() -> None:
     assert payload["candidates"][0]["r126_rank"] == 1
 
 
+def test_wider_candidate_pool_keeps_top_one_and_two_labels() -> None:
+    index = pd.bdate_range(end="2026-08-10", periods=140)
+    frames = {}
+    for rank in range(1, 21):
+        finish = 220.0 - rank
+        values = [100.0 + (finish - 100.0) * i / 139 for i in range(140)]
+        frames[f"S{rank:02d}.US"] = pd.DataFrame({"close": values}, index=index)
+
+    payload = json.loads(
+        _tool(frames).execute(
+            as_of="2026-08-10",
+            symbols=[f"S{rank:02d}" for rank in range(1, 21)],
+            candidate_pct=10,
+        )
+    )
+
+    assert payload["candidate_pct"] == 10
+    assert [row["symbol"] for row in payload["candidates"]] == [
+        "S01.US",
+        "S02.US",
+    ]
+    assert payload["candidates"][0]["bucket"] == "core"
+    assert payload["candidates"][1]["bucket"] == "broad"
+
+
+def test_candidate_percentage_is_bounded() -> None:
+    tool = _tool({})
+    for value in (0, 21, 2.5, True):
+        payload = json.loads(
+            tool.execute(as_of="2026-08-10", symbols=["A"], candidate_pct=value)
+        )
+        assert payload["status"] == "error"
+        assert "candidate_pct" in payload["error"]
+
+
 def test_common_completed_date_prevents_cross_date_comparison() -> None:
     frames = {
         "A.US": _frame(end="2026-08-10", end_price=200),

@@ -1,11 +1,27 @@
 ---
 name: breakout-scan
-description: Screen US stocks for Qullamaggie-style breakout candidates using 1-, 3-, and 6-month relative strength plus a 2-week to 2-month tightening base, higher lows, contracting volume, rising 10/20-day averages, and a confirmed swing-high pivot. Use whenever the user asks to select stocks, scan candidates, build a watchlist, or find setups for a breakout strategy, 突破策略选股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
+description: Screen US stocks for Qullamaggie-style breakout candidates using graded evidence from 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising averages, and a confirmed swing-high pivot. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, or find setups for a breakout strategy, 突破策略选股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
 ---
 
 # Breakout Scan
 
 筛选 Qullamaggie Setup 1 的美股候选。只做候选识别和排序；除非用户另行要求，不生成入场、止损、仓位、退出规则，不下单。
+
+## 判断原则：理想模板，不是机械淘汰表
+
+原策略的涨幅、平台天数、回撤、波幅收窄、量缩、均线和接近 pivot 等数值，均视为**理想参考区间**。实际形态不需要逐项完全符合，也不得因为单个参数越界就自动排除。每只股票都要展示符合项、偏离项、偏离幅度，以及为什么整体结构仍可接受或不再像该策略。
+
+仅保留两类硬约束：
+
+1. **数据有效性**：股票池、复权口径、共同截止日和 OHLCV 必须足以支持结论；未知不得伪装成通过。
+2. **突破定义**：只有突破或接近一个已确认摆动高点，才可称为 `breakout_ready`；未经确认的高点或任意近期最高价不能冒充 pivot。尚未形成确认 pivot 的股票仍可列为 `developing`，而不是从观察池消失。
+
+分级采用证据权重而非硬凑通过项数量：
+
+- `ideal`：大部分理想特征方向一致，且不存在足以推翻形态的明显反证。
+- `acceptable`：若干参数偏离理想值，但上涨、整理、收窄和 pivot 的整体叙事仍连贯。
+- `developing`：形态有潜力，但 pivot 尚未确认、整理仍在发展或关键证据不足。
+- `not_a_setup`：缺少第一段上涨/平台结构，波动明显扩张，或存在其他足以推翻该形态的反证。必须解释整体反证，不能只引用一个轻微越界值。
 
 ## 默认口径
 
@@ -21,9 +37,9 @@ description: Screen US stocks for Qullamaggie-style breakout candidates using 1-
 
 ### 1. 锁定数据与覆盖
 
-1. 先锁定明确的 `as_of` 日期。用户未指定股票池时，必须调用 `screen_momentum(as_of=..., universe="sp500")`；用户指定代码时，必须把代码传给同一工具的 `symbols` 参数。
+1. 先锁定明确的 `as_of` 日期。用户未指定股票池时，必须调用 `screen_momentum(as_of=..., universe="sp500", candidate_pct=10)`；用户指定代码时，必须把代码传给同一工具的 `symbols` 参数，并使用 `candidate_pct=10`。
 2. `screen_momentum` 负责批量取得复权日线、锁定共同完整交易日，并计算 21/63/126 日横截面排名。不要让模型逐只下载股票再手工排名。
-3. 只对工具返回的三个周期前 2% 并集继续执行后续上涨段、平台和 pivot 检查。不得自行补入未入选股票。
+3. 只对工具返回的三个周期前 10% 并集继续执行后续上涨段、平台和 pivot 检查。不得自行补入未入选股票。前 1%/2% 是强度标签，不是淘汰线。
 4. 检查工具返回的股票池来源、成分日期、分母、共同截止日和 `failed_symbols`。若默认 S&P 500 成分加载失败，停止，不得改用 `screen_market` 或手选名单。
 5. 后续需要完整 OHLCV 判断平台时，再仅对初筛候选调用 `get_market_data`，使用 `source="auto"`、`interval="1D"`，并确保 `max_rows` 不做间隔抽样。不同来源不一致时报告差异，不得拼接。
 
@@ -39,15 +55,16 @@ R126 = Close[t] / Close[t-126] - 1
 
 分别在同一股票池内按 `R21`、`R63`、`R126` 降序做百分位排名：
 
-- 核心池：任一周期进入前 1%。
-- 观察池：未进前 1%，但任一周期进入前 2%。
+- 核心标签：任一周期进入前 1%。
+- 强势标签：未进前 1%，但任一周期进入前 2%。
+- 扩展候选：未进前 2%，但任一周期进入前 10%。这类股票可以凭更好的平台结构排在前 1%/2% 股票之前，但必须保留原始名次证据。
 - 样本太小导致 1% 少于 1 只时，至少保留排名第 1；必须同时展示名次和分母。
 - 不得把三个收益率平均后再宣称“前 1%–2%”；三个周期的横截面排名必须分别保留。
 - 后续输出必须沿用工具返回的名次和有效样本分母，不由模型重新估算百分位。
 
 ### 3. 第一段上涨
 
-对初筛股票识别平台开始前 1–3 个月的上涨段，优先保留：
+对初筛股票识别平台开始前 1–3 个月的上涨段，以下是理想特征：
 
 - 累计涨幅约 `30%–100%+`；
 - 上涨持续数天至数周，而非只有一天的脉冲；
@@ -57,19 +74,19 @@ R126 = Close[t] / Close[t-126] - 1
 
 ### 4. 平台结构
 
-寻找持续 `10–42` 个交易日（约 2 周–2 个月）的整理区间。平台起止日必须先固定，再计算下列指标；不得为了让某只股票通过而移动窗口。以下项目是 `ready` / `forming` 的**硬门槛**，不是加分项：
+优先寻找持续 `10–42` 个交易日（约 2 周–2 个月）的整理区间，但略短或更长的平台仍可评估。平台起止日必须先固定，再计算下列指标；不得为了提高评级而移动窗口。以下项目均是理想证据和反证检查，不是逐项硬门槛：
 
-1. **平台深度与宽度**：以平台起点后的运行高点计算最大回撤，`max_drawdown <= 15%`；整个平台的 `max(high) / min(low) - 1 <= 20%`。任一超限都排除，不能用后续反弹或低点抬高抵消。
-2. **实质波动收窄**：使用 `normalized_TR = true_range / previous_close`。后半段中位数必须不高于前半段的 `85%`，最近 5 日中位数必须不高于后半段的 `90%`；最近 5 日任何一日若超过平台中位数的 `1.5 倍`，视为近期波动扩张并排除。`99%`、`98%` 这类几乎未收窄的结果不得判为通过。
-3. **低点抬高**：至少两个已确认摆动低点，后一个高于前一个。
-4. **成交量收缩**：平台后半段成交量中位数不得高于前半段的 `90%`；单日异常量必须单列说明，不能只用中位数掩盖事件冲击。
-5. **冲击后重新稳定**：若平台内出现 `normalized_TR >= 前20日中位数的2倍`，则该日记为价格冲击日；若现有数据工具可读取公司日历，还要披露同日财报等重大事件，但不得为了补事件标签启用付费数据。冲击后至少需要 10 个完整交易日，且最近 5 日 normalized TR 中位数必须低于冲击前 20 日中位数，才能恢复为候选；否则排除，不得标为 `ready`。事件标签未知不影响价格冲击硬门槛的计算。
-6. **均线向上**：10 日和 20 日均线均上升，价格主要运行在其附近或上方；偶尔回踩 50 日线不自动淘汰。50 日线不是原策略硬门槛。
-7. **明确且仍有效的平台上沿**：上沿必须对应已确认的摆动高点，不能用任意近期最高价代替。Pivot 必须位于平台后半段；若位于前半段，只有后半段至少一次高点回到其 `2%` 以内才可继续使用。Pivot 距当前不得超过 15 个交易日，且 pivot 后最大回撤不得超过 `10%`；否则它是远端旧高点，不属于当前紧凑结构。
+1. **平台深度与宽度**：理想值为 `max_drawdown <= 15%`、`max(high) / min(low) - 1 <= 20%`。越深或越宽是负面证据，但要结合后续是否重新收窄判断，不能单项自动淘汰。
+2. **实质波动收窄**：使用 `normalized_TR = true_range / previous_close`。理想状态是后半段中位数不高于前半段的 `85%`，最近 5 日中位数不高于后半段的 `90%`，且近期没有超过平台中位数 `1.5 倍` 的扩张日。`99%`、`98%` 只能说明收窄证据弱，不能伪报为明显收窄，也不单独触发淘汰。
+3. **低点抬高**：理想状态是至少两个已确认摆动低点，后一个高于前一个。只有一个低点时降低置信度并标为 `developing`。
+4. **成交量收缩**：理想状态是平台后半段成交量中位数不高于前半段的 `90%`。单日异常量必须单列说明，不能只用中位数掩盖事件冲击。
+5. **冲击后重新稳定**：若平台内出现 `normalized_TR >= 前20日中位数的2倍`，则该日记为价格冲击日。理想恢复状态是冲击后已有至少 10 个完整交易日，且最近 5 日 normalized TR 中位数低于冲击前 20 日中位数。恢复不足是重要反证，通常降为 `developing` 或 `not_a_setup`，但不得假装冲击不存在。
+6. **均线向上**：理想状态是 10 日和 20 日均线上升，价格主要运行在其附近或上方；偶尔回踩 50 日线不自动淘汰。均线未完全转向时降低评级，不直接排除。
+7. **明确且仍有效的平台上沿**：上沿必须对应已确认的摆动高点，不能用任意近期最高价代替。理想状态是 pivot 位于平台后半段；即 `Pivot 距当前不得超过 15 个交易日`、pivot 后最大回撤不超过 `10%`。前半段 pivot 若后半段高点回到其 `2%` 以内，仍是较强证据。偏离这些理想值时评估其是否仍代表当前结构，并明确降级理由。
 
 默认用 `3-3 pivot` 把“已确认摆动点”操作化：某根 K 线的高点严格高于左右各 3 根 K 线的高点，低点严格低于左右各 3 根 K 线的低点。右侧 3 根尚未完成时，摆动点未确认。若用户指定其他 pivot 结构，保留其定义并重新计算。
 
-每项必须输出实测值、阈值和 `pass/fail/unknown`。任何硬门槛为 `fail` 时排除；缺少 OHLCV 或足够前置窗口导致无法计算时标为 `unknown` / `needs_review`，不得把未知当通过。禁止只汇总“通过几项”后让其他强项抵消失败项。
+每项必须输出实测值、理想参考值和 `ideal/acceptable/weak/unknown`。缺少 OHLCV 或足够前置窗口导致无法计算时标为 `unknown` / `needs_review`，不得把未知当通过。最终评级必须说明主要正面证据和主要反证，禁止只汇总“通过几项”或用单一总分隐藏结构问题。
 
 ### 5. 接近突破的可执行排序
 
@@ -79,15 +96,15 @@ R126 = Close[t] / Close[t-126] - 1
 distance_to_pivot = Close[t] / pivot_price - 1
 ```
 
-默认只把尚未突破且距离 pivot 不超过 5% 的股票标为 `ready`；5% 是为了形成可执行观察名单的操作阈值，不是 Qullamaggie 原文硬规则。其他合格平台保留为 `forming`。已经明显突破或远离 pivot 的股票标为 `extended_or_triggered`，不得混进“待突破”名单。
+距离 pivot 不超过 5% 是 `breakout_ready` 的理想操作区间，不是原策略硬规则。距离略远但结构良好的股票保留为 `acceptable` 或 `developing`；已经明显突破或远离 pivot 的股票标为 `extended_or_triggered`，与“待突破”名单分开展示。
 
 排序优先级：
 
-1. 进入前 1% 的周期数；
-2. 三个周期中最好的百分位及名次；
-3. 全部平台硬门槛均通过后的结构质量；
-4. 距 pivot 的绝对距离更小；
-5. 数据完整度更高。
+1. 整体形态评级：`ideal`、`acceptable`、`developing`；
+2. 平台收窄、低点、量价和冲击恢复的结构质量；
+3. 进入前 1%/2% 的周期数及三个周期的原始名次；
+4. 距 pivot 的绝对距离与 pivot 有效性；
+5. 数据完整度。
 
 不得把成交量放大作为候选期硬门槛；突破日放量属于触发验证，不属于本 skill 的平台选股条件。
 
@@ -106,11 +123,11 @@ distance_to_pivot = Close[t] / pivot_price - 1
 ```markdown
 ## 突破候选（as of YYYY-MM-DD）
 
-| 排名 | 代码 | 状态 | R21名次 | R63名次 | R126名次 | 上涨段 | 平台天数 | Pivot | 距Pivot | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | Pivot有效性 | 风险/缺口 |
+| 排名 | 代码 | 评级 | 状态 | R21名次 | R63名次 | R126名次 | 上涨段 | 平台天数 | Pivot | 距Pivot | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | 主要偏离/反证 |
 |---:|---|---|---:|---:|---:|---|---:|---:|---:|---|---|---|---|---|---|
 
-### 排除但接近的股票
-| 代码 | 排除原因 | 缺失或失败的标准 |
+### 发展中或不构成形态的股票
+| 代码 | 评级 | 仍可取之处 | 主要偏离或整体反证 |
 
 ### 数据与覆盖
 - 截止日：
@@ -121,6 +138,6 @@ distance_to_pivot = Close[t] / pivot_price - 1
 - 操作化定义：3-3 pivot、5% ready 阈值及任何用户覆盖值
 ```
 
-每个入选项都要给出可核查的日期和数值证据。排除项必须给出触发的硬门槛和实测值，例如 `platform_max_drawdown=27% > 15%`，不得只写“形态较弱”。将结果称为研究/观察名单，不作保证收益或直接买入建议。
+每个入选项都要给出可核查的日期和数值证据。偏离项必须给出实测值和理想参考值，例如 `platform_max_drawdown=27%，高于理想值15%`，并解释它是可接受偏离还是足以推翻形态的反证，不得只写“形态较弱”。将结果称为研究/观察名单，不作保证收益或直接买入建议。
 
 来源方法：Qullamaggie，[My 3 Timeless Setups That Have Made Me Tens of Millions](https://qullamaggie.com/my-3-timeless-setups-that-have-made-me-tens-of-millions/)，Setup 1 Breakout。

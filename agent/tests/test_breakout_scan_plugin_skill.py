@@ -31,6 +31,7 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "R126",
         "前 1%",
         "前 2%",
+        "前 10%",
         "10–42",
         "3-3 pivot",
         "screen_market",
@@ -43,8 +44,12 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "normalized_TR = true_range / previous_close",
         "前20日中位数的2倍",
         "Pivot 距当前不得超过 15 个交易日",
-        "pass/fail/unknown",
+        "ideal/acceptable/weak/unknown",
         "不得把未知当通过",
+        "理想模板，不是机械淘汰表",
+        "candidate_pct=10",
+        "不能单项自动淘汰",
+        "breakout_ready",
     )
     for marker in required:
         assert marker in text
