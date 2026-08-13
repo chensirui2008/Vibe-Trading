@@ -1,6 +1,6 @@
 ---
 name: breakout-scan
-description: Screen US stocks for Qullamaggie-style breakout candidates using graded evidence from 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising averages, and a breakout above the platform's overall resistance zone. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, or find setups for a breakout strategy, 突破策略选股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
+description: Screen leading US equity sectors first, then select Qullamaggie-style breakout candidates from those sectors using graded evidence from 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising averages, and a breakout above the platform's overall resistance zone. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, compare sector leadership before stock selection, or find setups for a breakout strategy, 突破策略选股, 强势板块突破股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
 ---
 
 # Breakout Scan
@@ -30,22 +30,35 @@ description: Screen US stocks for Qullamaggie-style breakout candidates using gr
 - 截止日：最近一个完整交易日。盘中数据不得与完整日线混算。
 - 复权：收益率和均线使用复权日线；成交量使用数据源提供的对应日线口径。
 - 股票池：使用用户指定或能够逐项列明、注明成分日期的美股股票池。必须报告股票池名称、成分日期、总数、成功取数数和失败代码。
+- 板块代理：默认使用 SPDR 11 大行业 ETF：`XLB` 材料、`XLC` 通信服务、`XLE` 能源、`XLF` 金融、`XLI` 工业、`XLK` 信息技术、`XLP` 日常消费、`XLRE` 房地产、`XLU` 公用事业、`XLV` 医疗保健、`XLY` 可选消费；基准为 `SPY`。
 
 禁止把 `screen_market` 返回的当日涨幅榜、热门股列表或当前指数成分代理冒充“美股全市场”。用户未指定且无法获得可审计股票池时，停止并请用户指定；不得静默缩小范围。
 
+ETF 价格只用于衡量板块表现，不能自动证明个股归属。必须使用与股票池可对齐、带来源和成分日期的行业映射。若改用 Sector ETF 持仓来构建成分池，必须将股票池明确标注为“当前 Sector ETF 成分代理”并报告持仓日期与覆盖率；不得称为全市场。
+
 ## 工作流
 
-### 1. 锁定数据与覆盖
+### 1. 先筛选强势行业板块
 
-1. 记录明确的 `as_of`、股票池来源和成分日期。
-2. 对股票池中每个代码调用 `get_market_data` 取得至少 150 个完整交易日的复权日线 OHLCV，使用 `source="auto"`、`interval="1D"`、`max_rows=0`。
-3. 锁定共同完整交易日，检查重复日期、非递增日期、缺失 OHLCV、非正价格和覆盖不足。任何失败进入 `failed_symbols`；不得用零值、前值填充或其他代码替代。
-4. 若批量调用存在返回条数上限，先验证上限是每个代码还是整次请求。分批时保持同一截止日和同一口径；不同来源不一致时报告差异，不得拼接。
-5. 在同一股票池和共同截止日上计算三个周期的横截面排名，只保留任一周期前 10% 的并集继续检查。前 1%/2% 是强度标签，不是淘汰线。
-6. 对每个候选先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得看到结果后移动起点来提高评级。
-7. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论，也不得在参数和外部状态未改变时无条件重试。
+1. 记录明确的 `as_of`，对 `SPY` 和 11 个 Sector ETF 调用 `get_market_data`，取得至少 150 个完整交易日的复权日线，使用 `source="auto"`、`interval="1D"`、`max_rows=0`。
+2. 锁定 12 个 ETF 的共同完整交易日，检查日期、价格和覆盖。若 `SPY` 或任一 Sector ETF 失败，板块横截面不完整，停止并返回 `无法完成可靠筛选`；不得静默删除失败板块。
+3. 对每个 Sector ETF 计算 `R21`、`R63`、`R126`，以及同周期相对 `SPY` 的超额收益 `ER21 = R21_sector - R21_SPY`、`ER63`、`ER126`。
+4. 分别按三个周期的 Sector ETF 收益率降序排名，计算 `weighted_sector_rank = 0.50 * rank21 + 0.30 * rank63 + 0.20 * rank126`；数值越小，板块越强。排名并列时使用同名次，再按 `ER21`、`ER63`、`ER126` 降序做稳定排序。
+5. 依综合排名依次保留最多 5 个板块，且要求 `ER21`、`ER63`、`ER126` 中至少 2 个严格大于 0。合格板块少于 5 个时如实缩小，不用弱板块补足；一个都没有时输出板块表并停止个股扫描。
+6. 先报告 11 个板块的原始收益、相对 `SPY` 超额收益、三周期名次、加权名次与是否入选，再进入个股层。不得只报告入选板块。
 
-### 2. 相对强度初筛
+### 2. 锁定板块内股票池与数据覆盖
+
+1. 记录原始股票池来源、成分日期、行业分类标准和映射日期；将原始股票池与入选板块取交集，得到 `eligible_sector_universe`。报告原始总数、有效行业映射数、未映射代码、板块过滤后数量及每个入选板块的数量。
+2. 行业标签为空、无法与 11 大板块对齐或无法确认类型的代码进入 `unmapped_symbols`，不得猜测归属。若行业映射不可审计，停止并返回 `无法完成可靠筛选`。
+3. 仅对 `eligible_sector_universe` 中每个代码调用 `get_market_data` 取得至少 150 个完整交易日的复权日线 OHLCV，使用 `source="auto"`、`interval="1D"`、`max_rows=0`。
+4. 锁定共同完整交易日，检查重复日期、非递增日期、缺失 OHLCV、非正价格和覆盖不足。任何失败进入 `failed_symbols`；不得用零值、前值填充或其他代码替代。
+5. 若批量调用存在返回条数上限，先验证上限是每个代码还是整次请求。分批时保持同一截止日和同一口径；不同来源不一致时报告差异，不得拼接。
+6. 在同一 `eligible_sector_universe` 和共同截止日上计算三个周期的横截面排名，只保留任一周期前 10% 的并集继续检查。前 1%/2% 是强度标签，不是淘汰线。所有名次和分母均以该板块过滤后股票池为准，不得宣称为全市场百分位。
+7. 对每个候选先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得看到结果后移动起点来提高评级。
+8. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论，也不得在参数和外部状态未改变时无条件重试。
+
+### 3. 板块内相对强度初筛
 
 在每只股票最后一个共同有效交易日计算：
 
@@ -55,7 +68,7 @@ R63  = Close[t] / Close[t-63]  - 1
 R126 = Close[t] / Close[t-126] - 1
 ```
 
-分别在同一股票池内按 `R21`、`R63`、`R126` 降序做百分位排名：
+分别在同一 `eligible_sector_universe` 内按 `R21`、`R63`、`R126` 降序做百分位排名：
 
 - 核心标签：任一周期进入前 1%。
 - 强势标签：未进前 1%，但任一周期进入前 2%。
@@ -64,7 +77,7 @@ R126 = Close[t] / Close[t-126] - 1
 - 不得把三个收益率平均后再宣称“前 1%–2%”；三个周期的横截面排名必须分别保留。
 - 后续输出必须沿用初筛计算得到的名次和有效样本分母，不得更换股票池后重新包装百分位。
 
-### 3. 第一段上涨
+### 4. 第一段上涨
 
 对初筛股票识别平台开始前 1–3 个月的上涨段，以下是理想特征：
 
@@ -74,7 +87,7 @@ R126 = Close[t] / Close[t-126] - 1
 
 原策略没有规定唯一的上涨段算法。必须展示所用起止日期和涨幅；若无法稳定识别，标为 `needs_review`，不得伪造精确结论。
 
-### 4. 平台结构
+### 5. 平台结构
 
 优先寻找持续 `10–42` 个交易日（约 2 周–2 个月）的整理区间，但略短或更长的平台仍可评估。平台起止日必须先固定，再由 `analyze_breakout_setup` 计算下列指标；不得为了提高评级而移动窗口。以下项目均是理想证据和反证检查，不是逐项硬门槛：
 
@@ -99,7 +112,7 @@ R126 = Close[t] / Close[t-126] - 1
 
 这不是把 15%/20% 理想值重新变成硬门槛，而是区分“轻微不理想”和“整体结构已经被明显反证”。例如收窄比率 `99%` 只能标为弱证据；深跌后剧烈反弹不能因低点机械抬高就升级为 Ready。
 
-### 5. 接近突破的可执行排序
+### 6. 接近突破的可执行排序
 
 以平台整体阻力带上边界作为 `zone_upper`：
 
@@ -134,19 +147,25 @@ distance_to_zone_upper = Close[t] / zone_upper - 1
 ```markdown
 ## 突破候选（as of YYYY-MM-DD）
 
-| 排名 | 代码 | 评级 | 状态 | R21名次 | R63名次 | R126名次 | 上涨段 | 平台天数 | 上沿价格带 | 距上边界 | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | 主要偏离/反证 |
-|---:|---|---|---:|---:|---:|---|---:|---:|---:|---|---|---|---|---|---|
+| 排名 | 代码 | 板块 | 评级 | 状态 | R21名次 | R63名次 | R126名次 | 上涨段 | 平台天数 | 上沿价格带 | 距上边界 | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | 主要偏离/反证 |
+|---:|---|---|---|---|---:|---:|---:|---|---:|---|---:|---|---|---|---|---|
 
 ### 发展中或不构成形态的股票
 | 代码 | 评级 | 仍可取之处 | 主要偏离或整体反证 |
 
+### 板块强弱
+| 综合排名 | 板块/ETF | R21 | ER21 vs SPY | R63 | ER63 vs SPY | R126 | ER126 vs SPY | 21/63/126 名次 | 加权名次 | 入选 |
+
 ### 数据与覆盖
 - 截止日：
-- 股票池及成分日期：
-- 股票池总数 / 成功 / 失败：
+- 板块代理、基准与数据源：
+- 原始股票池及成分日期：
+- 行业映射来源、标准与日期：
+- 原始总数 / 有效行业映射 / 板块过滤后 / 成功 / 失败：
 - 数据源与复权口径：
+- 未映射代码：
 - 失败代码：
-- 操作化定义：顶部 25% High、2% 聚类容差、至少 2 次触碰、排除评估日、收盘突破上边界、5% ready 阈值及任何用户覆盖值
+- 操作化定义：Sector ETF 的 21/63/126 日加权名次 50%/30%/20%、超额收益至少 2 个周期为正、最多 5 个板块、顶部 25% High、2% 聚类容差、至少 2 次触碰、排除评估日、收盘突破上边界、5% ready 阈值及任何用户覆盖值
 ```
 
 每个入选项都要给出可核查的日期和数值证据。偏离项必须给出实测值和理想参考值，例如 `platform_max_drawdown=27%，高于理想值15%`，并解释它是可接受偏离还是足以推翻形态的反证，不得只写“形态较弱”。将结果称为研究/观察名单，不作保证收益或直接买入建议。
