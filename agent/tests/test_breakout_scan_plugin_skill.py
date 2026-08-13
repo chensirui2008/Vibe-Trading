@@ -54,6 +54,7 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "deep_base_drawdown",
         "recent_volatility_expansion",
         "upstream_rate_limited",
+        "不得在参数和外部状态都未改变时无条件重复调用",
     )
     for marker in required:
         assert marker in text

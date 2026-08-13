@@ -9,6 +9,8 @@ import pandas as pd
 from src.tools.momentum_screener_tool import (
     MomentumScreenerTool,
     _classify_upstream_error,
+    _default_history_fetcher,
+    _download_adjusted_batch,
     _extract_adjusted_frames,
 )
 
@@ -21,10 +23,7 @@ def _frame(
     end_price: float = 200.0,
 ) -> pd.DataFrame:
     index = pd.bdate_range(end=end, periods=periods)
-    close = [
-        start_price + (end_price - start_price) * offset / (periods - 1)
-        for offset in range(periods)
-    ]
+    close = [start_price + (end_price - start_price) * offset / (periods - 1) for offset in range(periods)]
     return pd.DataFrame({"close": close}, index=index)
 
 
@@ -44,11 +43,7 @@ def test_returns_ranks_ties_and_top_two_union() -> None:
         values = [100.0 + (finish - 100.0) * i / 139 for i in range(140)]
         frames[symbol] = pd.DataFrame({"close": values}, index=index)
 
-    payload = json.loads(
-        _tool(frames).execute(
-            as_of="2026-08-10", symbols=["A", "B.US", "C"]
-        )
-    )
+    payload = json.loads(_tool(frames).execute(as_of="2026-08-10", symbols=["A", "B.US", "C"]))
 
     assert payload["status"] == "ok"
     rows = {row["symbol"]: row for row in payload["candidates"]}
@@ -63,11 +58,7 @@ def test_small_custom_universe_keeps_first_for_each_horizon() -> None:
         "FAST.US": _frame(end_price=240),
         "SLOW.US": _frame(end_price=110),
     }
-    payload = json.loads(
-        _tool(frames).execute(
-            as_of="2026-08-10", symbols=["FAST", "SLOW"]
-        )
-    )
+    payload = json.loads(_tool(frames).execute(as_of="2026-08-10", symbols=["FAST", "SLOW"]))
     assert [row["symbol"] for row in payload["candidates"]] == ["FAST.US"]
     assert payload["candidates"][0]["r126_rank"] == 1
 
@@ -100,9 +91,7 @@ def test_wider_candidate_pool_keeps_top_one_and_two_labels() -> None:
 def test_candidate_percentage_is_bounded() -> None:
     tool = _tool({})
     for value in (0, 21, 2.5, True):
-        payload = json.loads(
-            tool.execute(as_of="2026-08-10", symbols=["A"], candidate_pct=value)
-        )
+        payload = json.loads(tool.execute(as_of="2026-08-10", symbols=["A"], candidate_pct=value))
         assert payload["status"] == "error"
         assert "candidate_pct" in payload["error"]
 
@@ -112,18 +101,14 @@ def test_common_completed_date_prevents_cross_date_comparison() -> None:
         "A.US": _frame(end="2026-08-10", end_price=200),
         "B.US": _frame(end="2026-08-07", end_price=180),
     }
-    payload = json.loads(
-        _tool(frames).execute(as_of="2026-08-10", symbols=["A", "B"])
-    )
+    payload = json.loads(_tool(frames).execute(as_of="2026-08-10", symbols=["A", "B"]))
     assert payload["common_date"] == "2026-08-07"
 
 
 def test_duplicate_missing_close_short_history_and_missing_symbol_are_disclosed() -> None:
     frames = {
         "GOOD.US": _frame(),
-        "NOCLOSE.US": pd.DataFrame(
-            {"open": [1.0] * 140}, index=pd.bdate_range(end="2026-08-10", periods=140)
-        ),
+        "NOCLOSE.US": pd.DataFrame({"open": [1.0] * 140}, index=pd.bdate_range(end="2026-08-10", periods=140)),
         "SHORT.US": _frame(periods=50),
     }
     payload = json.loads(
@@ -147,9 +132,7 @@ def test_empty_sp500_roster_fails_without_fallback_or_history_call() -> None:
         called = True
         return {}
 
-    tool = MomentumScreenerTool(
-        constituent_loader=lambda: [], history_fetcher=history_fetcher
-    )
+    tool = MomentumScreenerTool(constituent_loader=lambda: [], history_fetcher=history_fetcher)
     payload = json.loads(tool.execute(as_of="2026-08-10", universe="sp500"))
     assert payload["status"] == "error"
     assert "no fallback universe was used" in payload["error"]
@@ -178,12 +161,63 @@ def test_upstream_rate_limit_is_not_mislabeled_as_no_history() -> None:
 
 
 def test_parser_failures_are_observable() -> None:
-    raw = pd.DataFrame(
-        {"Open": [1.0]}, index=pd.DatetimeIndex([pd.Timestamp("2026-08-10")])
-    )
+    raw = pd.DataFrame({"Open": [1.0]}, index=pd.DatetimeIndex([pd.Timestamp("2026-08-10")]))
     frames, failures = _extract_adjusted_frames(raw, ["HAE.US"])
     assert frames == {}
     assert failures == {"HAE.US": "missing_adjusted_close"}
-    assert _classify_upstream_error("YFRateLimitError: Too Many Requests").startswith(
-        "upstream_rate_limited"
+    assert _classify_upstream_error("YFRateLimitError: Too Many Requests").startswith("upstream_rate_limited")
+
+
+def test_download_adapter_returns_call_scoped_yfinance_errors(monkeypatch) -> None:
+    import yfinance.multi as yf_multi
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.errors = {}
+
+    def fake_impl(context, symbols, **kwargs):
+        assert symbols == ["HAE"]
+        assert kwargs["auto_adjust"] is True
+        context.errors["HAE"] = "YFRateLimitError: Too Many Requests"
+        return pd.DataFrame()
+
+    monkeypatch.setattr(yf_multi, "_DownloadCtx", FakeContext)
+    monkeypatch.setattr(yf_multi, "_download_impl", fake_impl)
+    frame, errors = _download_adjusted_batch(["HAE"], "2026-01-01", "2026-08-11")
+    assert frame.empty
+    assert errors == {"HAE": "YFRateLimitError: Too Many Requests"}
+
+
+def test_batch_failures_preserve_earlier_successes(monkeypatch) -> None:
+    import src.tools.momentum_screener_tool as module
+
+    success = _frame()
+    calls = 0
+
+    def fake_download(symbols, _start, _end):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raw = pd.concat({"Close": pd.concat({symbols[0]: success["close"]}, axis=1)}, axis=1)
+            return raw, {}
+        return pd.DataFrame(), {symbol: "YFRateLimitError: Too Many Requests" for symbol in symbols}
+
+    monkeypatch.setattr(module, "_BATCH_SIZE", 1)
+    monkeypatch.setattr(module, "_download_adjusted_batch", fake_download)
+    frames, failures = _default_history_fetcher(["GOOD.US", "LIMITED.US"], "2026-01-01", "2026-08-10")
+
+    assert set(frames) == {"GOOD.US"}
+    assert failures["LIMITED.US"].startswith("upstream_rate_limited")
+
+
+def test_empty_batch_without_diagnostics_is_explicit_and_nonfatal(monkeypatch) -> None:
+    import src.tools.momentum_screener_tool as module
+
+    monkeypatch.setattr(
+        module,
+        "_download_adjusted_batch",
+        lambda _symbols, _start, _end: (pd.DataFrame(), {}),
     )
+    frames, failures = _default_history_fetcher(["HAE.US"], "2026-01-01", "2026-08-10")
+    assert frames == {}
+    assert failures == {"HAE.US": ("upstream_empty_response:yfinance:empty batch without call-scoped provider errors")}

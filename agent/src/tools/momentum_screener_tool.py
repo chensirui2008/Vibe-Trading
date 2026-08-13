@@ -61,9 +61,7 @@ def _extract_adjusted_frames(
                 selected = None
                 for level in range(raw.columns.nlevels):
                     if yahoo_symbol in raw.columns.get_level_values(level):
-                        selected = raw.xs(
-                            yahoo_symbol, axis=1, level=level, drop_level=True
-                        )
+                        selected = raw.xs(yahoo_symbol, axis=1, level=level, drop_level=True)
                         break
                 if selected is None:
                     failures[project_symbol] = "symbol_missing_from_batch_response"
@@ -74,11 +72,7 @@ def _extract_adjusted_frames(
                 failures[project_symbol] = "ambiguous_non_multiindex_batch_response"
                 continue
             close_col = next(
-                (
-                    column
-                    for column in selected.columns
-                    if str(column).lower() == "close"
-                ),
+                (column for column in selected.columns if str(column).lower() == "close"),
                 None,
             )
             if close_col is None:
@@ -104,43 +98,22 @@ def _default_history_fetcher(
     symbols: Sequence[str], start_date: str, end_date: str
 ) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
     """Fetch split/dividend-adjusted daily closes in bounded batches."""
-    import yfinance as yf
-
     fetched: dict[str, pd.DataFrame] = {}
     failures: dict[str, str] = {}
-    exclusive_end = (
-        pd.Timestamp(end_date).normalize() + pd.Timedelta(days=1)
-    ).strftime("%Y-%m-%d")
+    exclusive_end = (pd.Timestamp(end_date).normalize() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     for offset in range(0, len(symbols), _BATCH_SIZE):
         batch = list(symbols[offset : offset + _BATCH_SIZE])
         yahoo_batch = [symbol[:-3] for symbol in batch]
-        from yfinance import shared as yf_shared
-
-        # yfinance stores provider failures in mutable process-wide maps. Clear
-        # only the symbols in this request so an older failure cannot taint a
-        # later successful download of the same ticker.
-        for yahoo_symbol in yahoo_batch:
-            yf_shared._ERRORS.pop(yahoo_symbol, None)
-            yf_shared._TRACEBACKS.pop(yahoo_symbol, None)
         try:
-            raw = yf.download(
-                yahoo_batch,
-                start=start_date,
-                end=exclusive_end,
-                interval="1d",
-                auto_adjust=True,
-                actions=False,
-                progress=False,
-                threads=True,
-            )
+            raw, call_errors = _download_adjusted_batch(yahoo_batch, start_date, exclusive_end)
         except Exception as exc:
-            raise RuntimeError(
-                f"yfinance batch request failed for {batch}: {type(exc).__name__}: {exc}"
-            ) from exc
+            detail = " ".join(str(exc).split())[:300]
+            for symbol in batch:
+                failures[symbol] = f"batch_request_error:yfinance:{type(exc).__name__}:{detail}"
+            continue
 
-        shared_errors = getattr(yf_shared, "_ERRORS", {}) or {}
         for project_symbol, yahoo_symbol in zip(batch, yahoo_batch):
-            detail = shared_errors.get(yahoo_symbol)
+            detail = call_errors.get(yahoo_symbol)
             if detail:
                 failures[project_symbol] = _classify_upstream_error(str(detail))
 
@@ -152,12 +125,41 @@ def _default_history_fetcher(
             failures.setdefault(symbol, reason)
         if raw is None or raw.empty:
             unresolved = [symbol for symbol in batch if symbol not in failures]
-            if unresolved:
-                raise RuntimeError(
-                    "yfinance returned an empty batch without per-symbol errors "
-                    f"for {unresolved}"
-                )
+            for symbol in unresolved:
+                failures[symbol] = "upstream_empty_response:yfinance:empty batch without call-scoped provider errors"
     return fetched, failures
+
+
+def _download_adjusted_batch(
+    yahoo_symbols: Sequence[str], start_date: str, exclusive_end: str
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Run one yfinance download and return its call-scoped error map.
+
+    yfinance 1.5 moved failures from ``shared._ERRORS`` into a private
+    per-invocation ``_DownloadCtx``. The public ``download`` API discards that
+    context, so using it would make rate limits indistinguishable from a truly
+    empty response. Fail loudly if this versioned adapter disappears instead
+    of silently returning misleading ``no_history`` results.
+    """
+    from yfinance import multi as yf_multi
+
+    context_type = getattr(yf_multi, "_DownloadCtx", None)
+    download_impl = getattr(yf_multi, "_download_impl", None)
+    if context_type is None or download_impl is None:
+        raise RuntimeError("installed yfinance does not expose call-scoped download diagnostics")
+    context = context_type()
+    raw = download_impl(
+        context,
+        list(yahoo_symbols),
+        start=start_date,
+        end=exclusive_end,
+        interval="1d",
+        auto_adjust=True,
+        actions=False,
+        progress=False,
+        threads=True,
+    )
+    return raw, dict(context.errors)
 
 
 def _classify_upstream_error(detail: str) -> str:
@@ -172,9 +174,7 @@ def _classify_upstream_error(detail: str) -> str:
     return f"{code}:yfinance:{compact[:300]}"
 
 
-def _rank_rows(
-    returns: pd.DataFrame, *, candidate_pct: int = 2
-) -> list[dict[str, Any]]:
+def _rank_rows(returns: pd.DataFrame, *, candidate_pct: int = 2) -> list[dict[str, Any]]:
     metrics: dict[int, pd.DataFrame] = {}
     selected: set[str] = set()
     for horizon in _HORIZONS:
@@ -186,9 +186,7 @@ def _rank_rows(
         valid["top_pct"] = valid["rank"] / denominator * 100.0
         valid["top_1"] = valid["rank"] <= max(1, math.ceil(denominator * 0.01))
         valid["top_2"] = valid["rank"] <= max(1, math.ceil(denominator * 0.02))
-        valid["selected"] = valid["rank"] <= max(
-            1, math.ceil(denominator * candidate_pct / 100.0)
-        )
+        valid["selected"] = valid["rank"] <= max(1, math.ceil(denominator * candidate_pct / 100.0))
         metrics[horizon] = valid
         selected.update(valid.index[valid["selected"]])
 
@@ -293,8 +291,7 @@ class MomentumScreenerTool(BaseTool):
         constituent_loader: Callable[[], Sequence[str]] | None = None,
         history_fetcher: Callable[
             [Sequence[str], str, str],
-            Mapping[str, pd.DataFrame]
-            | tuple[Mapping[str, pd.DataFrame], Mapping[str, str]],
+            Mapping[str, pd.DataFrame] | tuple[Mapping[str, pd.DataFrame], Mapping[str, str]],
         ]
         | None = None,
     ) -> None:
@@ -303,11 +300,7 @@ class MomentumScreenerTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         candidate_pct = kwargs.get("candidate_pct", 2)
-        if (
-            isinstance(candidate_pct, bool)
-            or not isinstance(candidate_pct, int)
-            or not 1 <= candidate_pct <= 20
-        ):
+        if isinstance(candidate_pct, bool) or not isinstance(candidate_pct, int) or not 1 <= candidate_pct <= 20:
             return _error("candidate_pct must be an integer from 1 to 20")
 
         raw_as_of = kwargs.get("as_of")
@@ -350,9 +343,7 @@ class MomentumScreenerTool(BaseTool):
             except Exception as exc:
                 return _error(f"S&P 500 constituent load failed: {exc}")
             if not raw_constituents:
-                return _error(
-                    "S&P 500 constituent load returned no symbols; no fallback universe was used"
-                )
+                return _error("S&P 500 constituent load returned no symbols; no fallback universe was used")
             symbols = []
             seen = set()
             for raw in raw_constituents:
@@ -375,9 +366,7 @@ class MomentumScreenerTool(BaseTool):
 
         # Today's daily bar can be incomplete. Stop at the previous calendar
         # day and let the data identify the latest completed trading session.
-        requested_end = (
-            as_of - pd.Timedelta(days=1) if as_of.date() == date.today() else as_of
-        )
+        requested_end = as_of - pd.Timedelta(days=1) if as_of.date() == date.today() else as_of
         start = requested_end - pd.Timedelta(days=_FETCH_CALENDAR_DAYS)
         try:
             fetch_result = self._history_fetcher(
@@ -395,9 +384,7 @@ class MomentumScreenerTool(BaseTool):
             return _error(f"adjusted history batch failed: {exc}")
 
         cleaned: dict[str, pd.DataFrame] = {}
-        failed_reasons: dict[str, str] = {
-            value: "invalid_symbol" for value in invalid_symbols
-        }
+        failed_reasons: dict[str, str] = {value: "invalid_symbol" for value in invalid_symbols}
         failed_reasons.update(upstream_failures)
         for symbol in symbols:
             frame = fetched.get(symbol)
@@ -411,22 +398,14 @@ class MomentumScreenerTool(BaseTool):
             index = pd.DatetimeIndex(pd.to_datetime(frame.index))
             if index.tz is not None:
                 index = index.tz_localize(None)
-            normalized = pd.DataFrame(
-                {"close": series.to_numpy()}, index=index.normalize()
-            )
-            normalized = normalized[
-                ~normalized.index.duplicated(keep="last")
-            ].sort_index()
-            normalized = normalized[
-                (normalized.index <= requested_end) & (normalized["close"] > 0)
-            ]
+            normalized = pd.DataFrame({"close": series.to_numpy()}, index=index.normalize())
+            normalized = normalized[~normalized.index.duplicated(keep="last")].sort_index()
+            normalized = normalized[(normalized.index <= requested_end) & (normalized["close"] > 0)]
             if normalized.empty:
                 failed_reasons[symbol] = "no_usable_adjusted_close"
                 continue
             if len(normalized) < _MIN_BARS:
-                failed_reasons[symbol] = (
-                    f"insufficient_history:{len(normalized)}/{_MIN_BARS}"
-                )
+                failed_reasons[symbol] = f"insufficient_history:{len(normalized)}/{_MIN_BARS}"
                 continue
             cleaned[symbol] = normalized
 
@@ -451,14 +430,11 @@ class MomentumScreenerTool(BaseTool):
         for symbol, frame in cleaned.items():
             history = frame.loc[frame.index <= common_date, "close"]
             if len(history) < _MIN_BARS:
-                failed_reasons[symbol] = (
-                    f"insufficient_history:{len(history)}/{_MIN_BARS}"
-                )
+                failed_reasons[symbol] = f"insufficient_history:{len(history)}/{_MIN_BARS}"
                 continue
             latest = float(history.iloc[-1])
             returns_rows[symbol] = {
-                f"r{horizon}": latest / float(history.iloc[-horizon - 1]) - 1.0
-                for horizon in _HORIZONS
+                f"r{horizon}": latest / float(history.iloc[-horizon - 1]) - 1.0 for horizon in _HORIZONS
             }
 
         if not returns_rows:
@@ -486,8 +462,7 @@ class MomentumScreenerTool(BaseTool):
             "duplicate_symbols": sorted(set(duplicate_symbols)),
             "horizons": list(_HORIZONS),
             "selection": (
-                f"union of each horizon's top {candidate_pct}%; "
-                "core if top 1% and watch if top 2% in any horizon"
+                f"union of each horizon's top {candidate_pct}%; core if top 1% and watch if top 2% in any horizon"
             ),
             "candidate_pct": candidate_pct,
             "candidates": _rank_rows(returns, candidate_pct=candidate_pct),

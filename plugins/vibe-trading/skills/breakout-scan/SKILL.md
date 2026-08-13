@@ -44,6 +44,7 @@ description: Screen US stocks for Qullamaggie-style breakout candidates using gr
 5. 对每个进入后续检查的候选，先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得由模型临时手算平台指标，也不得看到结果后移动起点来提高评级。
 6. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论。需要查看原始行或交叉核对来源时才补充调用 `get_market_data`，使用 `source="auto"`、`interval="1D"`、`max_rows=0`；不同来源不一致时报告差异，不得拼接。
 7. 若 `screen_momentum.failed_symbols` 返回 `upstream_rate_limited`、`upstream_error` 或 `parse_error`，必须按真实错误披露。不得把这些错误解释为股票没有历史，也不得用未验证的排名继续排序。
+8. 同一任务内，不得在参数和外部状态都未改变时无条件重复调用失败的 `screen_momentum`。只有错误明确标为可重试且等待后外部状态可能改变，或用户修改股票池/截止日时才重试；否则直接披露失败，避免加重限流。
 
 ### 2. 相对强度初筛
 
