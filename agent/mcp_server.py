@@ -157,6 +157,7 @@ _READ_ONLY_MCP_TOOLS = {
     "get_stock_profile",
     "screen_market",
     "screen_momentum",
+    "analyze_breakout_setup",
     "search_symbol",
     "get_macro_series",
     "iwencai_search",
@@ -175,7 +176,11 @@ _READ_ONLY_MCP_TOOLS = {
 }
 
 _DESTRUCTIVE_MCP_TOOLS = {"write_file", "qveris_execute"}
-_OPEN_WORLD_MCP_TOOLS = {"qveris_execute", "screen_momentum"}
+_OPEN_WORLD_MCP_TOOLS = {
+    "qveris_execute",
+    "screen_momentum",
+    "analyze_breakout_setup",
+}
 
 
 def _plugin_tool(fn):
@@ -2084,6 +2089,40 @@ def screen_momentum(
     if clean_symbols:
         params["symbols"] = clean_symbols
     return _get_registry().execute("screen_momentum", params)
+
+
+@_plugin_tool
+def analyze_breakout_setup(
+    symbol: str,
+    platform_start: str,
+    as_of: str,
+    pivot_left: int = 3,
+    pivot_right: int = 3,
+) -> str:
+    """Calculate deterministic diagnostics for one proposed breakout base.
+
+    The caller fixes the base start before calculation. The tool fetches full
+    daily OHLCV and reports drawdown, width, normalized true-range and volume
+    contraction, shock recovery, moving-average slopes, and confirmed pivots.
+    It does not place trades or turn every ideal threshold into a hard gate.
+
+    Args:
+        symbol: One U.S. symbol such as AXON or AXON.US.
+        platform_start: Fixed proposed base start in YYYY-MM-DD format.
+        as_of: Inclusive analysis cutoff in YYYY-MM-DD format.
+        pivot_left: Required lower highs to the left of a pivot, default 3.
+        pivot_right: Required lower highs to the right of a pivot, default 3.
+    """
+    return _get_registry().execute(
+        "analyze_breakout_setup",
+        {
+            "symbol": symbol,
+            "platform_start": platform_start,
+            "as_of": as_of,
+            "pivot_left": pivot_left,
+            "pivot_right": pivot_right,
+        },
+    )
 
 
 @_plugin_tool

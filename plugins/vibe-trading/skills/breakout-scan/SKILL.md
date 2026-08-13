@@ -41,7 +41,9 @@ description: Screen US stocks for Qullamaggie-style breakout candidates using gr
 2. `screen_momentum` 负责批量取得复权日线、锁定共同完整交易日，并计算 21/63/126 日横截面排名。不要让模型逐只下载股票再手工排名。
 3. 只对工具返回的三个周期前 10% 并集继续执行后续上涨段、平台和 pivot 检查。不得自行补入未入选股票。前 1%/2% 是强度标签，不是淘汰线。
 4. 检查工具返回的股票池来源、成分日期、分母、共同截止日和 `failed_symbols`。若默认 S&P 500 成分加载失败，停止，不得改用 `screen_market` 或手选名单。
-5. 后续需要完整 OHLCV 判断平台时，再仅对初筛候选调用 `get_market_data`，使用 `source="auto"`、`interval="1D"`，并确保 `max_rows` 不做间隔抽样。不同来源不一致时报告差异，不得拼接。
+5. 对每个进入后续检查的候选，先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得由模型临时手算平台指标，也不得看到结果后移动起点来提高评级。
+6. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论。需要查看原始行或交叉核对来源时才补充调用 `get_market_data`，使用 `source="auto"`、`interval="1D"`、`max_rows=0`；不同来源不一致时报告差异，不得拼接。
+7. 若 `screen_momentum.failed_symbols` 返回 `upstream_rate_limited`、`upstream_error` 或 `parse_error`，必须按真实错误披露。不得把这些错误解释为股票没有历史，也不得用未验证的排名继续排序。
 
 ### 2. 相对强度初筛
 
@@ -74,7 +76,7 @@ R126 = Close[t] / Close[t-126] - 1
 
 ### 4. 平台结构
 
-优先寻找持续 `10–42` 个交易日（约 2 周–2 个月）的整理区间，但略短或更长的平台仍可评估。平台起止日必须先固定，再计算下列指标；不得为了提高评级而移动窗口。以下项目均是理想证据和反证检查，不是逐项硬门槛：
+优先寻找持续 `10–42` 个交易日（约 2 周–2 个月）的整理区间，但略短或更长的平台仍可评估。平台起止日必须先固定，再由 `analyze_breakout_setup` 计算下列指标；不得为了提高评级而移动窗口。以下项目均是理想证据和反证检查，不是逐项硬门槛：
 
 1. **平台深度与宽度**：理想值为 `max_drawdown <= 15%`、`max(high) / min(low) - 1 <= 20%`。越深或越宽是负面证据，但要结合后续是否重新收窄判断，不能单项自动淘汰。
 2. **实质波动收窄**：使用 `normalized_TR = true_range / previous_close`。理想状态是后半段中位数不高于前半段的 `85%`，最近 5 日中位数不高于后半段的 `90%`，且近期没有超过平台中位数 `1.5 倍` 的扩张日。`99%`、`98%` 只能说明收窄证据弱，不能伪报为明显收窄，也不单独触发淘汰。
@@ -87,6 +89,15 @@ R126 = Close[t] / Close[t-126] - 1
 默认用 `3-3 pivot` 把“已确认摆动点”操作化：某根 K 线的高点严格高于左右各 3 根 K 线的高点，低点严格低于左右各 3 根 K 线的低点。右侧 3 根尚未完成时，摆动点未确认。若用户指定其他 pivot 结构，保留其定义并重新计算。
 
 每项必须输出实测值、理想参考值和 `ideal/acceptable/weak/unknown`。缺少 OHLCV 或足够前置窗口导致无法计算时标为 `unknown` / `needs_review`，不得把未知当通过。最终评级必须说明主要正面证据和主要反证，禁止只汇总“通过几项”或用单一总分隐藏结构问题。
+
+工具返回的 `contraindications` 是防止机械误判的整体反证。轻微偏离仍可评为 `acceptable`，但以下结果通常足以否定当前紧凑突破平台；若仍保留候选，必须给出可核查的相反证据：
+
+- `deep_base_drawdown`（回撤超过约 25%）；
+- `very_wide_base`（平台宽度超过约 30%）；
+- `recent_volatility_expansion` 或 `recent_range_spike`；
+- `unrecovered_price_shock`。
+
+这不是把 15%/20% 理想值重新变成硬门槛，而是区分“轻微不理想”和“整体结构已经被明显反证”。例如收窄比率 `99%` 只能标为弱证据；深跌后剧烈反弹不能因低点机械抬高就升级为 Ready。
 
 ### 5. 接近突破的可执行排序
 

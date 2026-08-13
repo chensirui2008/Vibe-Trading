@@ -48,12 +48,13 @@ def _default_constituent_loader() -> list[str]:
 
 def _extract_adjusted_frames(
     raw: pd.DataFrame, symbols: Sequence[str]
-) -> dict[str, pd.DataFrame]:
+) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
     """Split one yfinance batch into project-symbol adjusted-close frames."""
     if raw is None or raw.empty:
-        return {}
+        return {}, {}
     yahoo_symbols = [symbol[:-3] for symbol in symbols]
     frames: dict[str, pd.DataFrame] = {}
+    failures: dict[str, str] = {}
     for project_symbol, yahoo_symbol in zip(symbols, yahoo_symbols):
         try:
             if isinstance(raw.columns, pd.MultiIndex):
@@ -65,10 +66,12 @@ def _extract_adjusted_frames(
                         )
                         break
                 if selected is None:
+                    failures[project_symbol] = "symbol_missing_from_batch_response"
                     continue
             elif len(symbols) == 1:
                 selected = raw
             else:
+                failures[project_symbol] = "ambiguous_non_multiindex_batch_response"
                 continue
             close_col = next(
                 (
@@ -79,6 +82,7 @@ def _extract_adjusted_frames(
                 None,
             )
             if close_col is None:
+                failures[project_symbol] = "missing_adjusted_close"
                 continue
             close = pd.to_numeric(selected[close_col], errors="coerce").dropna()
             index = pd.DatetimeIndex(pd.to_datetime(close.index))
@@ -89,35 +93,83 @@ def _extract_adjusted_frames(
             frame = frame[frame["close"] > 0]
             if not frame.empty:
                 frames[project_symbol] = frame
-        except Exception:
-            continue
-    return frames
+            else:
+                failures[project_symbol] = "no_usable_adjusted_close"
+        except Exception as exc:
+            failures[project_symbol] = f"parse_error:{type(exc).__name__}:{exc}"
+    return frames, failures
 
 
 def _default_history_fetcher(
     symbols: Sequence[str], start_date: str, end_date: str
-) -> dict[str, pd.DataFrame]:
+) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
     """Fetch split/dividend-adjusted daily closes in bounded batches."""
     import yfinance as yf
 
     fetched: dict[str, pd.DataFrame] = {}
+    failures: dict[str, str] = {}
     exclusive_end = (
         pd.Timestamp(end_date).normalize() + pd.Timedelta(days=1)
     ).strftime("%Y-%m-%d")
     for offset in range(0, len(symbols), _BATCH_SIZE):
         batch = list(symbols[offset : offset + _BATCH_SIZE])
-        raw = yf.download(
-            [symbol[:-3] for symbol in batch],
-            start=start_date,
-            end=exclusive_end,
-            interval="1d",
-            auto_adjust=True,
-            actions=False,
-            progress=False,
-            threads=True,
-        )
-        fetched.update(_extract_adjusted_frames(raw, batch))
-    return fetched
+        yahoo_batch = [symbol[:-3] for symbol in batch]
+        from yfinance import shared as yf_shared
+
+        # yfinance stores provider failures in mutable process-wide maps. Clear
+        # only the symbols in this request so an older failure cannot taint a
+        # later successful download of the same ticker.
+        for yahoo_symbol in yahoo_batch:
+            yf_shared._ERRORS.pop(yahoo_symbol, None)
+            yf_shared._TRACEBACKS.pop(yahoo_symbol, None)
+        try:
+            raw = yf.download(
+                yahoo_batch,
+                start=start_date,
+                end=exclusive_end,
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+                progress=False,
+                threads=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"yfinance batch request failed for {batch}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        shared_errors = getattr(yf_shared, "_ERRORS", {}) or {}
+        for project_symbol, yahoo_symbol in zip(batch, yahoo_batch):
+            detail = shared_errors.get(yahoo_symbol)
+            if detail:
+                failures[project_symbol] = _classify_upstream_error(str(detail))
+
+        parsed, parse_failures = _extract_adjusted_frames(raw, batch)
+        fetched.update(parsed)
+        for symbol in parsed:
+            failures.pop(symbol, None)
+        for symbol, reason in parse_failures.items():
+            failures.setdefault(symbol, reason)
+        if raw is None or raw.empty:
+            unresolved = [symbol for symbol in batch if symbol not in failures]
+            if unresolved:
+                raise RuntimeError(
+                    "yfinance returned an empty batch without per-symbol errors "
+                    f"for {unresolved}"
+                )
+    return fetched, failures
+
+
+def _classify_upstream_error(detail: str) -> str:
+    lowered = detail.lower()
+    if "ratelimit" in lowered or "too many requests" in lowered or "429" in lowered:
+        code = "upstream_rate_limited"
+    elif "possibly delisted" in lowered or "no price data found" in lowered:
+        code = "upstream_no_price_data"
+    else:
+        code = "upstream_error"
+    compact = " ".join(detail.split())
+    return f"{code}:yfinance:{compact[:300]}"
 
 
 def _rank_rows(
@@ -240,7 +292,9 @@ class MomentumScreenerTool(BaseTool):
         *,
         constituent_loader: Callable[[], Sequence[str]] | None = None,
         history_fetcher: Callable[
-            [Sequence[str], str, str], Mapping[str, pd.DataFrame]
+            [Sequence[str], str, str],
+            Mapping[str, pd.DataFrame]
+            | tuple[Mapping[str, pd.DataFrame], Mapping[str, str]],
         ]
         | None = None,
     ) -> None:
@@ -326,13 +380,17 @@ class MomentumScreenerTool(BaseTool):
         )
         start = requested_end - pd.Timedelta(days=_FETCH_CALENDAR_DAYS)
         try:
-            fetched = dict(
-                self._history_fetcher(
-                    symbols,
-                    start.strftime("%Y-%m-%d"),
-                    requested_end.strftime("%Y-%m-%d"),
-                )
+            fetch_result = self._history_fetcher(
+                symbols,
+                start.strftime("%Y-%m-%d"),
+                requested_end.strftime("%Y-%m-%d"),
             )
+            if isinstance(fetch_result, tuple):
+                fetched = dict(fetch_result[0])
+                upstream_failures = dict(fetch_result[1])
+            else:
+                fetched = dict(fetch_result)
+                upstream_failures = {}
         except Exception as exc:
             return _error(f"adjusted history batch failed: {exc}")
 
@@ -340,10 +398,11 @@ class MomentumScreenerTool(BaseTool):
         failed_reasons: dict[str, str] = {
             value: "invalid_symbol" for value in invalid_symbols
         }
+        failed_reasons.update(upstream_failures)
         for symbol in symbols:
             frame = fetched.get(symbol)
             if frame is None or not isinstance(frame, pd.DataFrame) or frame.empty:
-                failed_reasons[symbol] = "no_history"
+                failed_reasons.setdefault(symbol, "no_history")
                 continue
             if "close" not in frame.columns:
                 failed_reasons[symbol] = "missing_close"

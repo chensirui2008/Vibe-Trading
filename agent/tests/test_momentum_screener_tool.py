@@ -6,7 +6,11 @@ import json
 
 import pandas as pd
 
-from src.tools.momentum_screener_tool import MomentumScreenerTool
+from src.tools.momentum_screener_tool import (
+    MomentumScreenerTool,
+    _classify_upstream_error,
+    _extract_adjusted_frames,
+)
 
 
 def _frame(
@@ -158,3 +162,28 @@ def test_invalid_as_of_and_all_missing_history_fail_loudly() -> None:
     payload = json.loads(tool.execute(as_of="2026-08-10", symbols=["A"]))
     assert payload["status"] == "error"
     assert payload["failed_symbols"] == {"A.US": "no_history"}
+
+
+def test_upstream_rate_limit_is_not_mislabeled_as_no_history() -> None:
+    tool = MomentumScreenerTool(
+        constituent_loader=lambda: [],
+        history_fetcher=lambda _symbols, _start, _end: (
+            {},
+            {"HAE.US": "upstream_rate_limited:yfinance:YFRateLimitError: Too Many Requests"},
+        ),
+    )
+    payload = json.loads(tool.execute(as_of="2026-08-10", symbols=["HAE"]))
+    assert payload["status"] == "error"
+    assert payload["failed_symbols"]["HAE.US"].startswith("upstream_rate_limited")
+
+
+def test_parser_failures_are_observable() -> None:
+    raw = pd.DataFrame(
+        {"Open": [1.0]}, index=pd.DatetimeIndex([pd.Timestamp("2026-08-10")])
+    )
+    frames, failures = _extract_adjusted_frames(raw, ["HAE.US"])
+    assert frames == {}
+    assert failures == {"HAE.US": "missing_adjusted_close"}
+    assert _classify_upstream_error("YFRateLimitError: Too Many Requests").startswith(
+        "upstream_rate_limited"
+    )

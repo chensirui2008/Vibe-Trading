@@ -36,6 +36,7 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "3-3 pivot",
         "screen_market",
         "screen_momentum",
+        "analyze_breakout_setup",
         'universe="sp500"',
         "当前 S&P 500 成分代理排名",
         "failed_symbols",
@@ -50,6 +51,9 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "candidate_pct=10",
         "不能单项自动淘汰",
         "breakout_ready",
+        "deep_base_drawdown",
+        "recent_volatility_expansion",
+        "upstream_rate_limited",
     )
     for marker in required:
         assert marker in text
