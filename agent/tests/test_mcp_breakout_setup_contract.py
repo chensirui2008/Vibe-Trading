@@ -45,8 +45,6 @@ def test_wrapper_forwards_fixed_window(monkeypatch) -> None:
                 "symbol": "AXON",
                 "platform_start": "2026-06-29",
                 "as_of": "2026-08-11",
-                "pivot_left": 3,
-                "pivot_right": 3,
             },
         )
     ]

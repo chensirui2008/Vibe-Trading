@@ -13,6 +13,11 @@ import pandas as pd
 from src.agent.tools import BaseTool
 
 
+RESISTANCE_CANDIDATE_QUANTILE = 0.75
+RESISTANCE_CLUSTER_TOLERANCE = 0.02
+RESISTANCE_MINIMUM_TOUCHES = 2
+
+
 def _error(message: str, **details: Any) -> str:
     return json.dumps(
         {"status": "error", "error": message, **details},
@@ -46,14 +51,62 @@ def _default_history_fetcher(symbol: str, start: str, end: str) -> tuple[pd.Data
     return frame, str(provenance.get("source") or "auto")
 
 
-def _confirmed_pivots(values: pd.Series, *, left: int, right: int, high: bool) -> list[int]:
-    result: list[int] = []
-    for index in range(left, len(values) - right):
-        center = float(values.iloc[index])
-        neighbors = pd.concat([values.iloc[index - left : index], values.iloc[index + 1 : index + right + 1]])
-        if (center > neighbors).all() if high else (center < neighbors).all():
-            result.append(index)
-    return result
+def _resistance_zone(
+    highs: pd.Series,
+    *,
+    tolerance: float = RESISTANCE_CLUSTER_TOLERANCE,
+    minimum_touches: int = RESISTANCE_MINIMUM_TOUCHES,
+) -> dict[str, Any] | None:
+    """Find the most-tested upper-price cluster in a fixed base.
+
+    Only highs in the top quartile are eligible. Clusters are built from high
+    to low against a running median, preventing a chain of individually close
+    prices from creating an arbitrarily wide zone. Touch count is the primary
+    selector and the higher median breaks ties.
+    """
+    if highs.empty:
+        return None
+    cutoff = float(highs.quantile(RESISTANCE_CANDIDATE_QUANTILE))
+    candidates = highs[highs >= cutoff].sort_values(ascending=False)
+    clusters: list[list[tuple[pd.Timestamp, float]]] = []
+    for timestamp, raw_price in candidates.items():
+        price = float(raw_price)
+        matching: list[tuple[float, int]] = []
+        for index, cluster in enumerate(clusters):
+            representative = float(pd.Series([item[1] for item in cluster]).median())
+            relative_gap = abs(price / representative - 1.0)
+            if relative_gap <= tolerance:
+                matching.append((relative_gap, index))
+        if matching:
+            clusters[min(matching)[1]].append((pd.Timestamp(timestamp), price))
+        else:
+            clusters.append([(pd.Timestamp(timestamp), price)])
+
+    valid = [cluster for cluster in clusters if len(cluster) >= minimum_touches]
+    if not valid:
+        return None
+    selected = max(
+        valid,
+        key=lambda cluster: (
+            len(cluster),
+            float(pd.Series([item[1] for item in cluster]).median()),
+        ),
+    )
+    prices = [item[1] for item in selected]
+    touches = [
+        {"date": timestamp.date().isoformat(), "price": price}
+        for timestamp, price in sorted(selected, key=lambda item: item[0])
+    ]
+    return {
+        "lower": min(prices),
+        "upper": max(prices),
+        "representative": float(pd.Series(prices).median()),
+        "touch_count": len(touches),
+        "touches": touches,
+        "candidate_cutoff": cutoff,
+        "tolerance": tolerance,
+        "minimum_touches": minimum_touches,
+    }
 
 
 def _ratio(numerator: float, denominator: float) -> float | None:
@@ -70,7 +123,8 @@ class BreakoutSetupTool(BaseTool):
         "Read-only deterministic diagnostics for one U.S. stock breakout setup. "
         "Given an explicit platform_start and as_of date, fetches full daily OHLCV "
         "and measures base drawdown/width, normalized true-range contraction, volume "
-        "contraction, shock recovery, moving-average slopes, and confirmed 3-3 pivots. "
+        "contraction, shock recovery, moving-average slopes, and the platform's upper "
+        "resistance zone. "
         "It reports evidence and major contraindications; strategy thresholds remain "
         "ideal references rather than automatic single-factor exclusions."
     )
@@ -89,8 +143,6 @@ class BreakoutSetupTool(BaseTool):
                 "type": "string",
                 "description": "Inclusive analysis cutoff, YYYY-MM-DD.",
             },
-            "pivot_left": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
-            "pivot_right": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
         },
         "required": ["symbol", "platform_start", "as_of"],
         "additionalProperties": False,
@@ -123,12 +175,6 @@ class BreakoutSetupTool(BaseTool):
         if as_of.date() > date.today():
             return _error("as_of cannot be in the future")
 
-        pivot_left = kwargs.get("pivot_left", 3)
-        pivot_right = kwargs.get("pivot_right", 3)
-        for name, value in (("pivot_left", pivot_left), ("pivot_right", pivot_right)):
-            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10:
-                return _error(f"{name} must be an integer from 1 to 10")
-
         fetch_start = platform_start - pd.Timedelta(days=60)
         try:
             frame, source = self._history_fetcher(
@@ -153,7 +199,7 @@ class BreakoutSetupTool(BaseTool):
         cleaned = cleaned.dropna(subset=list(required))
         cleaned = cleaned[(cleaned.index <= as_of) & (cleaned["close"] > 0)]
         base = cleaned.loc[cleaned.index >= platform_start].copy()
-        minimum_bars = pivot_left + pivot_right + 2
+        minimum_bars = 3
         if len(base) < minimum_bars:
             return _error(
                 "proposed base has too few complete sessions",
@@ -203,23 +249,32 @@ class BreakoutSetupTool(BaseTool):
                 len(prior) == 20 and len(after) >= 10 and float(after.tail(5).median()) < float(prior.median())
             )
 
-        high_positions = _confirmed_pivots(base["high"], left=pivot_left, right=pivot_right, high=True)
-        low_positions = _confirmed_pivots(base["low"], left=pivot_left, right=pivot_right, high=False)
-        pivot: dict[str, Any] | None = None
-        if high_positions:
-            position = high_positions[-1]
-            pivot_date = base.index[position]
-            pivot_price = float(base["high"].iloc[position])
-            after_pivot = base.iloc[position + 1 :]
-            pivot_drawdown = float(after_pivot["low"].min() / pivot_price - 1.0) if not after_pivot.empty else 0.0
-            pivot = {
-                "date": pivot_date.date().isoformat(),
-                "price": pivot_price,
-                "sessions_ago": int(len(base) - 1 - position),
-                "distance": float(base["close"].iloc[-1] / pivot_price - 1.0),
-                "post_pivot_max_drawdown": pivot_drawdown,
-                "in_second_half": bool(position >= split),
+        formation = base.iloc[:-1]
+        resistance_zone = _resistance_zone(formation["high"])
+        breakout: dict[str, Any] | None = None
+        if resistance_zone is not None:
+            zone_upper = float(resistance_zone["upper"])
+            evaluation = base.iloc[-1]
+            breakout = {
+                "evaluation_date": base.index[-1].date().isoformat(),
+                "close": float(evaluation["close"]),
+                "high": float(evaluation["high"]),
+                "distance_to_upper": float(evaluation["close"] / zone_upper - 1.0),
+                "close_above_upper": bool(evaluation["close"] > zone_upper),
+                "intraday_test_above_upper": bool(evaluation["high"] > zone_upper),
             }
+
+        formation_split = max(1, len(formation) // 2)
+        first_half_low = float(formation.iloc[:formation_split]["low"].min())
+        second_half_low = float(formation.iloc[formation_split:]["low"].min())
+        higher_lows = second_half_low > first_half_low
+        low_structure = {
+            "method": "second_half_min_low_above_first_half_min_low",
+            "first_half_min_low": first_half_low,
+            "second_half_min_low": second_half_low,
+            "change": float(second_half_low / first_half_low - 1.0),
+            "higher_lows": higher_lows,
+        }
 
         sma10 = cleaned["close"].rolling(10).mean()
         sma20 = cleaned["close"].rolling(20).mean()
@@ -245,14 +300,11 @@ class BreakoutSetupTool(BaseTool):
             contraindications.append({"severity": "major", "code": "recent_range_spike"})
         if shock_recovered is False:
             contraindications.append({"severity": "major", "code": "unrecovered_price_shock"})
-        if pivot is None:
-            contraindications.append({"severity": "moderate", "code": "no_confirmed_pivot"})
+        if resistance_zone is None:
+            contraindications.append({"severity": "moderate", "code": "no_valid_resistance_zone"})
 
         major_count = sum(item["severity"] == "major" for item in contraindications)
         structure_assessment = "contradicted" if major_count >= 1 else ("mixed" if contraindications else "coherent")
-        low_points = [
-            {"date": base.index[pos].date().isoformat(), "price": float(base["low"].iloc[pos])} for pos in low_positions
-        ]
         payload = {
             "status": "ok",
             "symbol": symbol,
@@ -267,6 +319,13 @@ class BreakoutSetupTool(BaseTool):
                 "second_half_tr_ratio": "<=85%",
                 "recent_to_second_tr_ratio": "<=90%",
                 "second_half_volume_ratio": "<=90%",
+            },
+            "resistance_zone_definition": {
+                "candidate_high_quantile": RESISTANCE_CANDIDATE_QUANTILE,
+                "cluster_tolerance": RESISTANCE_CLUSTER_TOLERANCE,
+                "minimum_touches": RESISTANCE_MINIMUM_TOUCHES,
+                "evaluation_bar_excluded": True,
+                "breakout_confirmation": "close_above_zone_upper",
             },
             "metrics": {
                 "max_drawdown": max_drawdown,
@@ -283,9 +342,10 @@ class BreakoutSetupTool(BaseTool):
                 "sessions_since_last": sessions_since_shock,
                 "recovered": shock_recovered,
             },
-            "confirmed_pivot": pivot,
-            "confirmed_lows": low_points,
-            "higher_lows": bool(len(low_points) >= 2 and low_points[-1]["price"] > low_points[-2]["price"]),
+            "resistance_zone": resistance_zone,
+            "breakout": breakout,
+            "low_structure": low_structure,
+            "higher_lows": higher_lows,
             "contraindications": contraindications,
             "structure_assessment": structure_assessment,
             "interpretation": (

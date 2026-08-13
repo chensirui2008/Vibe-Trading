@@ -33,7 +33,7 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "前 2%",
         "前 10%",
         "10–42",
-        "3-3 pivot",
+        "平台整体形成的阻力带",
         "screen_market",
         "analyze_breakout_setup",
         "failed_symbols",
@@ -41,7 +41,12 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "max(high) / min(low) - 1 <= 20%",
         "normalized_TR = true_range / previous_close",
         "前20日中位数的2倍",
-        "Pivot 距当前不得超过 15 个交易日",
+        "最高四分位",
+        "2%",
+        "至少包含两个不同交易日触碰",
+        "Close > zone_upper",
+        "不使用 3-3 摆动低点",
+        "no_valid_resistance_zone",
         "ideal/acceptable/weak/unknown",
         "不得把未知当通过",
         "理想模板，不是机械淘汰表",
@@ -54,6 +59,8 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
     )
     for marker in required:
         assert marker in text
+
+    assert "默认用 `3-3 pivot`" not in text
 
 
 def test_breakout_scan_allows_implicit_invocation() -> None:

@@ -2063,22 +2063,19 @@ def analyze_breakout_setup(
     symbol: str,
     platform_start: str,
     as_of: str,
-    pivot_left: int = 3,
-    pivot_right: int = 3,
 ) -> str:
     """Calculate deterministic diagnostics for one proposed breakout base.
 
     The caller fixes the base start before calculation. The tool fetches full
     daily OHLCV and reports drawdown, width, normalized true-range and volume
-    contraction, shock recovery, moving-average slopes, and confirmed pivots.
+    contraction, shock recovery, moving-average slopes, the platform's upper
+    resistance zone, and whether the latest close broke above that zone.
     It does not place trades or turn every ideal threshold into a hard gate.
 
     Args:
         symbol: One U.S. symbol such as AXON or AXON.US.
         platform_start: Fixed proposed base start in YYYY-MM-DD format.
         as_of: Inclusive analysis cutoff in YYYY-MM-DD format.
-        pivot_left: Required lower highs to the left of a pivot, default 3.
-        pivot_right: Required lower highs to the right of a pivot, default 3.
     """
     return _get_registry().execute(
         "analyze_breakout_setup",
@@ -2086,8 +2083,6 @@ def analyze_breakout_setup(
             "symbol": symbol,
             "platform_start": platform_start,
             "as_of": as_of,
-            "pivot_left": pivot_left,
-            "pivot_right": pivot_right,
         },
     )
 
