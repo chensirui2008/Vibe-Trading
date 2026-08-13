@@ -46,7 +46,7 @@ def test_wrapper_forwards_default_and_custom_universes(monkeypatch) -> None:
             "screen_momentum",
             {
                 "as_of": "2026-08-10",
-                "universe": "sp500",
+                "universe": "us_all",
                 "candidate_pct": 2,
             },
         ),
@@ -54,7 +54,7 @@ def test_wrapper_forwards_default_and_custom_universes(monkeypatch) -> None:
             "screen_momentum",
             {
                 "as_of": "2026-08-10",
-                "universe": "sp500",
+                "universe": "us_all",
                 "symbols": ["AAPL", "MSFT.US"],
                 "candidate_pct": 2,
             },

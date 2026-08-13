@@ -2063,20 +2063,21 @@ def screen_market(market: str, sort_by: str = "change_pct", top_n: int = 30) -> 
 @_plugin_tool
 def screen_momentum(
     as_of: str,
-    universe: str = "sp500",
+    universe: str = "us_all",
     symbols: _lenient_str_list_opt = None,
     candidate_pct: int = 2,
 ) -> str:
     """Rank U.S. stocks by 21/63/126-session adjusted returns.
 
-    Uses the current S&P 500 constituent proxy by default, or a caller-supplied
-    symbol list. Returns the union of each horizon's configurable top
+    Uses a current filtered NASDAQ/NYSE/AMEX universe by default, the current
+    S&P 500 constituent proxy on request, or a caller-supplied symbol list.
+    Returns the union of each horizon's configurable top
     percentage, while retaining top 1% and 2% labels, rank denominators, and
     coverage failures. It does not detect bases or pivots.
 
     Args:
         as_of: Inclusive cutoff date in YYYY-MM-DD format.
-        universe: ``sp500`` for the current-constituent proxy.
+        universe: ``us_all`` for broad U.S. equities or ``sp500`` for the proxy.
         symbols: Optional custom U.S. symbols; overrides ``universe``.
         candidate_pct: Candidate breadth per horizon, from 1 through 20.
     """

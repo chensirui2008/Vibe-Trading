@@ -46,6 +46,12 @@ def _default_constituent_loader() -> list[str]:
     return _fetch_sp500_constituents()
 
 
+def _default_us_universe_loader() -> Mapping[str, Any]:
+    from src.tools.market_screener_tool import _load_us_equity_universe
+
+    return _load_us_equity_universe()
+
+
 def _extract_adjusted_frames(
     raw: pd.DataFrame, symbols: Sequence[str]
 ) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
@@ -236,12 +242,13 @@ def _rank_rows(returns: pd.DataFrame, *, candidate_pct: int = 2) -> list[dict[st
 
 
 class MomentumScreenerTool(BaseTool):
-    """Rank 21/63/126-session returns in an S&P 500 or custom universe."""
+    """Rank 21/63/126-session returns in a broad or custom U.S. universe."""
 
     name = "screen_momentum"
     description = (
-        "Read-only U.S. equity momentum screen. Resolves the current S&P 500 "
-        "proxy or an explicit symbol list, fetches adjusted daily closes in "
+        "Read-only U.S. equity momentum screen. Resolves a current broad U.S. "
+        "market universe, the current S&P 500 proxy, or an explicit symbol "
+        "list; fetches adjusted daily closes in "
         "batches, and returns the union of each horizon's configurable top "
         "percentage for 21, 63, and 126 sessions with ranks, denominators, "
         "coverage, and failures. Top 1% and 2% labels are always retained. "
@@ -256,16 +263,16 @@ class MomentumScreenerTool(BaseTool):
             },
             "universe": {
                 "type": "string",
-                "enum": ["sp500"],
-                "default": "sp500",
-                "description": "Default current-constituent S&P 500 proxy.",
+                "enum": ["us_all", "sp500"],
+                "default": "us_all",
+                "description": "Broad current U.S. equities or current-constituent S&P 500 proxy.",
             },
             "symbols": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
                     "Optional U.S. symbols such as AAPL or AAPL.US. When supplied, "
-                    "this custom universe replaces the S&P 500 proxy."
+                    "this custom universe replaces the named universe."
                 ),
             },
             "candidate_pct": {
@@ -289,6 +296,7 @@ class MomentumScreenerTool(BaseTool):
         self,
         *,
         constituent_loader: Callable[[], Sequence[str]] | None = None,
+        us_universe_loader: Callable[[], Mapping[str, Any]] | None = None,
         history_fetcher: Callable[
             [Sequence[str], str, str],
             Mapping[str, pd.DataFrame] | tuple[Mapping[str, pd.DataFrame], Mapping[str, str]],
@@ -296,6 +304,7 @@ class MomentumScreenerTool(BaseTool):
         | None = None,
     ) -> None:
         self._constituent_loader = constituent_loader or _default_constituent_loader
+        self._us_universe_loader = us_universe_loader or _default_us_universe_loader
         self._history_fetcher = history_fetcher or _default_history_fetcher
 
     def execute(self, **kwargs: Any) -> str:
@@ -314,6 +323,7 @@ class MomentumScreenerTool(BaseTool):
             return _error("as_of cannot be in the future")
 
         raw_symbols = kwargs.get("symbols")
+        universe_metadata: dict[str, Any] = {}
         duplicate_symbols: list[str] = []
         invalid_symbols: list[str] = []
         if raw_symbols is not None:
@@ -336,14 +346,19 @@ class MomentumScreenerTool(BaseTool):
             constituent_date = None
             survivorship_bias = None
         else:
-            if kwargs.get("universe", "sp500") != "sp500":
-                return _error("universe must be 'sp500'")
+            universe = kwargs.get("universe", "us_all")
+            if universe not in {"us_all", "sp500"}:
+                return _error("universe must be 'us_all' or 'sp500'")
             try:
-                raw_constituents = list(self._constituent_loader())
+                if universe == "us_all":
+                    universe_metadata = dict(self._us_universe_loader())
+                    raw_constituents = list(universe_metadata.pop("symbols", []) or [])
+                else:
+                    raw_constituents = list(self._constituent_loader())
             except Exception as exc:
-                return _error(f"S&P 500 constituent load failed: {exc}")
+                return _error(f"{universe} constituent load failed: {exc}")
             if not raw_constituents:
-                return _error("S&P 500 constituent load returned no symbols; no fallback universe was used")
+                return _error(f"{universe} constituent load returned no symbols; no fallback universe was used")
             symbols = []
             seen = set()
             for raw in raw_constituents:
@@ -356,9 +371,15 @@ class MomentumScreenerTool(BaseTool):
                     continue
                 seen.add(symbol)
                 symbols.append(symbol)
-            universe_name = "sp500_current_proxy"
-            constituent_source = "wikipedia current S&P 500 constituents"
-            constituent_date = date.today().isoformat()
+            universe_name = "us_all_current_filtered" if universe == "us_all" else "sp500_current_proxy"
+            constituent_source = (
+                universe_metadata.get("source")
+                if universe == "us_all"
+                else "wikipedia current S&P 500 constituents"
+            )
+            constituent_date = (
+                universe_metadata.get("source_date") if universe == "us_all" else date.today().isoformat()
+            )
             survivorship_bias = True
 
         if not symbols:
@@ -415,19 +436,30 @@ class MomentumScreenerTool(BaseTool):
                 failed_symbols=failed_reasons,
             )
 
-        common_dates: set[pd.Timestamp] | None = None
+        date_counts: dict[pd.Timestamp, int] = {}
         for frame in cleaned.values():
-            dates = set(frame.index)
-            common_dates = dates if common_dates is None else common_dates & dates
-        if not common_dates:
+            for trading_date in frame.index:
+                date_counts[trading_date] = date_counts.get(trading_date, 0) + 1
+        if not date_counts:
             return _error(
                 "symbols have no common completed trading date",
                 failed_symbols=failed_reasons,
             )
-        common_date = max(common_dates)
+        # Use the latest date supported by a strict majority. This preserves a
+        # shared date for a two-name custom set, while preventing a small stale
+        # or halted minority from dragging a market-wide screen backward.
+        minimum_coverage = len(cleaned) // 2 + 1
+        common_date = max(
+            trading_date
+            for trading_date, coverage in date_counts.items()
+            if coverage >= minimum_coverage
+        )
 
         returns_rows: dict[str, dict[str, float]] = {}
         for symbol, frame in cleaned.items():
+            if common_date not in frame.index:
+                failed_reasons[symbol] = f"missing_common_date:{common_date.date().isoformat()}"
+                continue
             history = frame.loc[frame.index <= common_date, "close"]
             if len(history) < _MIN_BARS:
                 failed_reasons[symbol] = f"insufficient_history:{len(history)}/{_MIN_BARS}"
@@ -453,6 +485,7 @@ class MomentumScreenerTool(BaseTool):
             "constituent_source": constituent_source,
             "constituent_source_date": constituent_date,
             "survivorship_bias": survivorship_bias,
+            "universe_metadata": universe_metadata if universe_name == "us_all_current_filtered" else None,
             "price_adjustment": "split-and-dividend adjusted (yfinance auto_adjust=True)",
             "data_source": "yfinance batch download",
             "universe_count": len(symbols),

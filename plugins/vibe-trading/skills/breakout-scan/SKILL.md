@@ -29,18 +29,18 @@ description: Screen US stocks for Qullamaggie-style breakout candidates using gr
 - 标的：普通股与 ADR；排除 ETF、基金、权证、优先股、OTC 和无法确认类型的代码。
 - 截止日：最近一个完整交易日。盘中数据不得与完整日线混算。
 - 复权：收益率和均线使用复权日线；成交量使用数据源提供的对应日线口径。
-- 股票池：优先使用用户指定股票池；否则默认使用当前 S&P 500 成分代理。它不是美股全市场，也不是历史无偏股票池。必须报告股票池名称、成分日期、总数、成功取数数和失败代码。
+- 股票池：优先使用用户指定股票池；否则默认使用 Eastmoney 当前 NASDAQ、NYSE、NYSE American 完整分页目录中可确认具有行业分类的普通股与 ADR。无行业分类或命中 ETF、基金、权证、权利、单位、优先股标记的证券一律排除并报告计数。它是当前过滤股票池，不是历史无偏股票池。必须报告股票池名称、成分日期、原始证券数、过滤后总数、成功取数数和失败代码。
 
-禁止把 `screen_market` 返回的当日涨幅榜、热门股列表或当前 S&P 500 成分代理冒充“美股全市场”。默认结果必须称为“当前 S&P 500 成分代理排名”。无法获得该股票池时停止，不得使用手选 fallback 或静默缩小范围。
+禁止把 `screen_market` 返回的当日涨幅榜、热门股列表或当前 S&P 500 成分代理冒充“美股全市场”。默认结果必须称为“当前 Eastmoney 美股全市场过滤股票池排名”，并披露证券类型过滤依赖行业分类与名称标记。完整分页、总数一致性或类型过滤元数据缺失时停止，不得使用手选 fallback 或静默缩小范围。
 
 ## 工作流
 
 ### 1. 锁定数据与覆盖
 
-1. 先锁定明确的 `as_of` 日期。用户未指定股票池时，必须调用 `screen_momentum(as_of=..., universe="sp500", candidate_pct=10)`；用户指定代码时，必须把代码传给同一工具的 `symbols` 参数，并使用 `candidate_pct=10`。
+1. 先锁定明确的 `as_of` 日期。用户未指定股票池时，必须调用 `screen_momentum(as_of=..., universe="us_all", candidate_pct=10)`；用户指定代码时，必须把代码传给同一工具的 `symbols` 参数，并使用 `candidate_pct=10`。
 2. `screen_momentum` 负责批量取得复权日线、锁定共同完整交易日，并计算 21/63/126 日横截面排名。不要让模型逐只下载股票再手工排名。
 3. 只对工具返回的三个周期前 10% 并集继续执行后续上涨段、平台和 pivot 检查。不得自行补入未入选股票。前 1%/2% 是强度标签，不是淘汰线。
-4. 检查工具返回的股票池来源、成分日期、分母、共同截止日和 `failed_symbols`。若默认 S&P 500 成分加载失败，停止，不得改用 `screen_market` 或手选名单。
+4. 检查工具返回的股票池来源、成分日期、原始证券数、各类排除计数、排名分母、共同截止日和 `failed_symbols`。若默认全市场分页或过滤失败，停止，不得改用 `screen_market` 热门榜、S&P 500 或手选名单。
 5. 对每个进入后续检查的候选，先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得由模型临时手算平台指标，也不得看到结果后移动起点来提高评级。
 6. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论。需要查看原始行或交叉核对来源时才补充调用 `get_market_data`，使用 `source="auto"`、`interval="1D"`、`max_rows=0`；不同来源不一致时报告差异，不得拼接。
 7. 若 `screen_momentum.failed_symbols` 返回 `upstream_rate_limited`、`upstream_error` 或 `parse_error`，必须按真实错误披露。不得把这些错误解释为股票没有历史，也不得用未验证的排名继续排序。

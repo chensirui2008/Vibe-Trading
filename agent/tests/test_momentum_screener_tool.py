@@ -105,6 +105,18 @@ def test_common_completed_date_prevents_cross_date_comparison() -> None:
     assert payload["common_date"] == "2026-08-07"
 
 
+def test_stale_minority_is_excluded_instead_of_dragging_common_date_backward() -> None:
+    frames = {
+        "A.US": _frame(end="2026-08-10", end_price=200),
+        "B.US": _frame(end="2026-08-10", end_price=180),
+        "STALE.US": _frame(end="2026-08-07", end_price=160),
+    }
+    payload = json.loads(_tool(frames).execute(as_of="2026-08-10", symbols=["A", "B", "STALE"]))
+    assert payload["common_date"] == "2026-08-10"
+    assert payload["failed_symbols"]["STALE.US"] == "missing_common_date:2026-08-10"
+    assert payload["ranked_count"] == 2
+
+
 def test_duplicate_missing_close_short_history_and_missing_symbol_are_disclosed() -> None:
     frames = {
         "GOOD.US": _frame(),
@@ -136,6 +148,50 @@ def test_empty_sp500_roster_fails_without_fallback_or_history_call() -> None:
     payload = json.loads(tool.execute(as_of="2026-08-10", universe="sp500"))
     assert payload["status"] == "error"
     assert "no fallback universe was used" in payload["error"]
+    assert called is False
+
+
+def test_us_all_loader_metadata_and_symbols_are_forwarded() -> None:
+    requested: list[str] = []
+
+    def history_fetcher(symbols, _start, _end):
+        requested.extend(symbols)
+        return {symbol: _frame() for symbol in symbols}
+
+    tool = MomentumScreenerTool(
+        us_universe_loader=lambda: {
+            "symbols": ["AAPL", "BIDU"],
+            "source": "Eastmoney test directory",
+            "source_date": "2026-08-13",
+            "raw_instrument_count": 3,
+            "excluded_counts": {"unconfirmed_security_type": 1},
+        },
+        history_fetcher=history_fetcher,
+    )
+    payload = json.loads(tool.execute(as_of="2026-08-10", universe="us_all"))
+
+    assert payload["status"] == "ok"
+    assert requested == ["AAPL.US", "BIDU.US"]
+    assert payload["universe"] == "us_all_current_filtered"
+    assert payload["constituent_source"] == "Eastmoney test directory"
+    assert payload["universe_metadata"]["raw_instrument_count"] == 3
+
+
+def test_us_all_loader_failure_has_no_sp500_fallback() -> None:
+    called = False
+
+    def sp500_loader():
+        nonlocal called
+        called = True
+        return ["AAPL"]
+
+    tool = MomentumScreenerTool(
+        constituent_loader=sp500_loader,
+        us_universe_loader=lambda: (_ for _ in ()).throw(RuntimeError("page 2 missing")),
+    )
+    payload = json.loads(tool.execute(as_of="2026-08-10", universe="us_all"))
+    assert payload["status"] == "error"
+    assert "page 2 missing" in payload["error"]
     assert called is False
 
 
