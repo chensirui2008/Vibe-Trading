@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from src.tools.market_screener_tool import MarketScreenerTool, _load_us_equity_universe
+from src.tools.market_screener_tool import MarketScreenerTool
 
 _CLIST_PAYLOAD = {
     "data": {
@@ -120,84 +120,6 @@ class TestSuccessEnvelope:
         # bare list, with an empty "rows".
         assert payload["data"]["rows"] == []
         assert payload["data"]["sort_by"] == "change_pct"
-
-
-class TestUsUniverseLoader:
-    def test_pages_and_filters_with_complete_total(self):
-        pages = {
-            "1": {
-                "data": {
-                    "total": 4,
-                    "diff": [
-                        {"f12": "AAPL", "f14": "Apple Inc", "f100": "Information Technology"},
-                        {"f12": "SPY", "f14": "SPDR S&P 500 ETF", "f100": ""},
-                    ],
-                }
-            },
-            "2": {
-                "data": {
-                    "total": 4,
-                    "diff": [
-                        {"f12": "BIDU", "f14": "Baidu ADR", "f100": "Communication Services"},
-                        {"f12": "AACBR", "f14": "Artius II Rights", "f100": ""},
-                    ],
-                }
-            },
-        }
-
-        def fake_get(_url, *, params):
-            return pages[params["pn"]]
-
-        with patch("src.tools.market_screener_tool._UNIVERSE_PAGE_SIZE", 2), patch(
-            "src.tools.market_screener_tool.get_json", side_effect=fake_get
-        ):
-            result = _load_us_equity_universe()
-
-        assert result["symbols"] == ["AAPL", "BIDU"]
-        assert result["raw_instrument_count"] == 4
-        assert result["excluded_counts"] == {
-            "missing_or_duplicate_code": 0,
-            "unconfirmed_security_type": 2,
-            "known_non_equity": 0,
-        }
-
-    def test_incomplete_pages_fail_loudly(self):
-        payload = {
-            "data": {
-                "total": 2,
-                "diff": [{"f12": "AAPL", "f14": "Apple", "f100": "Technology"}],
-            }
-        }
-        with patch("src.tools.market_screener_tool.get_json", return_value=payload):
-            try:
-                _load_us_equity_universe()
-            except ValueError as exc:
-                assert "incomplete" in str(exc)
-            else:
-                raise AssertionError("incomplete universe must fail")
-
-    def test_transient_page_failure_is_retried(self):
-        calls = 0
-        payload = {
-            "data": {
-                "total": 1,
-                "diff": [{"f12": "AAPL", "f14": "Apple", "f100": "Technology"}],
-            }
-        }
-
-        def flaky_get(_url, *, params):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise RuntimeError("HTTP 502")
-            return payload
-
-        with patch("src.tools.market_screener_tool.get_json", side_effect=flaky_get), patch(
-            "src.tools.market_screener_tool.time.sleep"
-        ):
-            result = _load_us_equity_universe()
-        assert result["symbols"] == ["AAPL"]
-        assert calls == 2
 
 
 class TestErrorEnvelope:

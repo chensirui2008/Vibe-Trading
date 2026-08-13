@@ -12,7 +12,7 @@ analysis, market data, fundamentals & capital-flow & news & discovery
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
 get_research_reports / get_stock_news / get_sec_filings /
 get_financial_statements / get_options_chain / get_stock_profile /
-screen_market / screen_momentum / search_symbol / get_macro_series / iwencai_search /
+screen_market / search_symbol / get_macro_series / iwencai_search /
 qveris_search / qveris_inspect / qveris_execute),
 institutional-research and alternative data (get_institutional_holdings /
 etf_holdings / prediction_market / research_papers), read-only finance math and
@@ -156,7 +156,6 @@ _READ_ONLY_MCP_TOOLS = {
     "get_options_chain",
     "get_stock_profile",
     "screen_market",
-    "screen_momentum",
     "analyze_breakout_setup",
     "search_symbol",
     "get_macro_series",
@@ -178,7 +177,6 @@ _READ_ONLY_MCP_TOOLS = {
 _DESTRUCTIVE_MCP_TOOLS = {"write_file", "qveris_execute"}
 _OPEN_WORLD_MCP_TOOLS = {
     "qveris_execute",
-    "screen_momentum",
     "analyze_breakout_setup",
 }
 
@@ -2058,38 +2056,6 @@ def screen_market(market: str, sort_by: str = "change_pct", top_n: int = 30) -> 
     """
     registry = _get_registry()
     return registry.execute("screen_market", {"market": market, "sort_by": sort_by, "top_n": top_n})
-
-
-@_plugin_tool
-def screen_momentum(
-    as_of: str,
-    universe: str = "us_all",
-    symbols: _lenient_str_list_opt = None,
-    candidate_pct: int = 2,
-) -> str:
-    """Rank U.S. stocks by 21/63/126-session adjusted returns.
-
-    Uses a current filtered NASDAQ/NYSE/AMEX universe by default, the current
-    S&P 500 constituent proxy on request, or a caller-supplied symbol list.
-    Returns the union of each horizon's configurable top
-    percentage, while retaining top 1% and 2% labels, rank denominators, and
-    coverage failures. It does not detect bases or pivots.
-
-    Args:
-        as_of: Inclusive cutoff date in YYYY-MM-DD format.
-        universe: ``us_all`` for broad U.S. equities or ``sp500`` for the proxy.
-        symbols: Optional custom U.S. symbols; overrides ``universe``.
-        candidate_pct: Candidate breadth per horizon, from 1 through 20.
-    """
-    params: dict[str, Any] = {
-        "as_of": as_of,
-        "universe": universe,
-        "candidate_pct": candidate_pct,
-    }
-    clean_symbols = _clean_list(symbols)
-    if clean_symbols:
-        params["symbols"] = clean_symbols
-    return _get_registry().execute("screen_momentum", params)
 
 
 @_plugin_tool

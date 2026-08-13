@@ -19,9 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
-import time
-from datetime import date
 from typing import Any
 
 from backtest.loaders.eastmoney_client import get_json
@@ -53,31 +50,6 @@ _SORT_FID: dict[str, str] = {
 # Column selectors requested from the endpoint, in no particular order; values
 # are read out by name from each row dict below.
 _FIELDS = "f2,f3,f4,f5,f6,f8,f12,f14"
-
-# The full-universe loader intentionally requests only classification fields.
-# Eastmoney does not expose a documented security-type flag in this response,
-# so a non-empty industry is required as positive equity evidence. Instruments
-# without that evidence are excluded instead of being guessed into the pool.
-_UNIVERSE_FIELDS = "f2,f12,f13,f14,f100"
-_UNIVERSE_PAGE_SIZE = 100
-_UNIVERSE_PAGE_ATTEMPTS = 3
-_NON_EQUITY_NAME_MARKERS = (
-    " ETF",
-    "ETF-",
-    "ETN",
-    "EXCHANGE TRADED FUND",
-    "EXCHANGE-TRADED FUND",
-    "WARRANT",
-    "RIGHTS",
-    "RIGHT ",
-    " UNITS",
-    " UNIT ",
-    "PREFERRED",
-    "优先股",
-    "权证",
-    "认股权",
-    "基金",
-)
 
 # Defensive caps so a full-market response can never blow up the LLM context.
 _MAX_TOP_N = 100
@@ -190,128 +162,6 @@ def _screen_market(market: str, *, sort_by: str, top_n: int) -> list[dict[str, A
         if shaped is not None:
             rows.append(shaped)
     return rows[:top_n]
-
-
-def _load_us_equity_universe() -> dict[str, Any]:
-    """Load a complete, fail-closed U.S. equity roster from Eastmoney.
-
-    The quote list contains funds and other listed instruments. Because its
-    list response has no reliable security-type field, only rows carrying a
-    non-empty Eastmoney industry classification are accepted, followed by an
-    explicit name-based exclusion pass. This deliberately sacrifices some
-    coverage rather than silently treating unknown instruments as stocks.
-    """
-    def fetch_page(page: int) -> Any:
-        for attempt in range(1, _UNIVERSE_PAGE_ATTEMPTS + 1):
-            try:
-                return get_json(
-                    _CLIST_URL,
-                    params={
-                        "pn": str(page),
-                        "pz": str(_UNIVERSE_PAGE_SIZE),
-                        "po": "1",
-                        # Sorting by price is materially more reliable on the
-                        # provider than sorting by code for deep pages. The
-                        # stable order is irrelevant to cross-sectional ranks.
-                        "fid": "f2",
-                        "fs": _MARKET_FS["us"],
-                        "fields": _UNIVERSE_FIELDS,
-                    },
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Eastmoney U.S. universe page %d attempt %d/%d failed: %s",
-                    page,
-                    attempt,
-                    _UNIVERSE_PAGE_ATTEMPTS,
-                    exc,
-                )
-                if attempt == _UNIVERSE_PAGE_ATTEMPTS:
-                    raise
-                time.sleep(attempt)
-        raise AssertionError("unreachable universe page retry state")
-
-    first = fetch_page(1)
-    data = first.get("data") if isinstance(first, dict) else None
-    if not isinstance(data, dict) or not isinstance(data.get("total"), int):
-        raise ValueError("Eastmoney U.S. universe response omitted an integer total")
-    total = data["total"]
-    if total <= 0:
-        raise ValueError("Eastmoney U.S. universe returned an empty roster")
-
-    pages = math.ceil(total / _UNIVERSE_PAGE_SIZE)
-    raw_rows: list[Any] = []
-    first_page_count: int | None = None
-    for page in range(1, pages + 1):
-        if page == 1:
-            page_data = data
-        else:
-            payload = fetch_page(page)
-            page_data = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(page_data, dict) or page_data.get("total") != total:
-            raise ValueError(f"Eastmoney U.S. universe changed or became invalid on page {page}")
-        diff = page_data.get("diff")
-        if isinstance(diff, dict):
-            diff = list(diff.values())
-        if not isinstance(diff, list):
-            raise ValueError(f"Eastmoney U.S. universe page {page} omitted rows")
-        if page == 1:
-            first_page_count = len(diff)
-            if first_page_count == 0:
-                raise ValueError("Eastmoney U.S. universe first page returned no rows")
-            # Eastmoney currently clamps this endpoint to 100 rows even when a
-            # larger pz is requested. Fail if the configured size no longer
-            # matches the actual pagination contract instead of skipping rows.
-            if total > _UNIVERSE_PAGE_SIZE and first_page_count != _UNIVERSE_PAGE_SIZE:
-                raise ValueError(
-                    "Eastmoney U.S. universe page size mismatch: "
-                    f"requested {_UNIVERSE_PAGE_SIZE}, received {first_page_count}"
-                )
-        elif page < pages and len(diff) != first_page_count:
-            raise ValueError(
-                f"Eastmoney U.S. universe page {page} size changed: "
-                f"received {len(diff)}, expected {first_page_count}"
-            )
-        raw_rows.extend(diff)
-
-    if len(raw_rows) != total:
-        raise ValueError(f"Eastmoney U.S. universe incomplete: received {len(raw_rows)}/{total} rows")
-
-    symbols: list[str] = []
-    seen: set[str] = set()
-    excluded = {"missing_or_duplicate_code": 0, "unconfirmed_security_type": 0, "known_non_equity": 0}
-    for row in raw_rows:
-        if not isinstance(row, dict) or not row.get("f12"):
-            excluded["missing_or_duplicate_code"] += 1
-            continue
-        symbol = str(row["f12"]).strip().upper()
-        if not symbol or symbol in seen:
-            excluded["missing_or_duplicate_code"] += 1
-            continue
-        seen.add(symbol)
-        industry = str(row.get("f100") or "").strip()
-        if not industry:
-            excluded["unconfirmed_security_type"] += 1
-            continue
-        name = f" {str(row.get('f14') or '').upper()} "
-        if any(marker in name for marker in _NON_EQUITY_NAME_MARKERS):
-            excluded["known_non_equity"] += 1
-            continue
-        symbols.append(symbol)
-
-    if not symbols:
-        raise ValueError("Eastmoney U.S. universe filtering left no confirmed equities")
-    return {
-        "symbols": symbols,
-        "source": "Eastmoney current NASDAQ/NYSE/AMEX quote directory",
-        "source_date": date.today().isoformat(),
-        "raw_instrument_count": total,
-        "excluded_counts": excluded,
-        "classification": (
-            "included only rows with a non-empty Eastmoney industry; excluded known fund, "
-            "warrant, right, unit, and preferred-share name markers"
-        ),
-    }
 
 
 class MarketScreenerTool(BaseTool):

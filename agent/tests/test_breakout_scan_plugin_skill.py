@@ -35,10 +35,7 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "10–42",
         "3-3 pivot",
         "screen_market",
-        "screen_momentum",
         "analyze_breakout_setup",
-        'universe="us_all"',
-        "当前 Eastmoney 美股全市场过滤股票池排名",
         "failed_symbols",
         "max_drawdown <= 15%",
         "max(high) / min(low) - 1 <= 20%",
@@ -48,13 +45,12 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "ideal/acceptable/weak/unknown",
         "不得把未知当通过",
         "理想模板，不是机械淘汰表",
-        "candidate_pct=10",
         "不能单项自动淘汰",
         "breakout_ready",
         "deep_base_drawdown",
         "recent_volatility_expansion",
-        "upstream_rate_limited",
-        "不得在参数和外部状态都未改变时无条件重复调用",
+        'get_market_data',
+        'max_rows=0',
     )
     for marker in required:
         assert marker in text

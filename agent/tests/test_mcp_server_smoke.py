@@ -40,11 +40,11 @@ INIT_TIMEOUT = 30.0
 # safe lower bound that still flags the deadlock quickly.
 CALL_TIMEOUT = 15.0
 
-# Tools we rely on as a baseline. The repo currently ships 72 MCP tools; we
+# Tools we rely on as a baseline. The repo currently ships 71 MCP tools; we
 # assert ``>= 30`` so unrelated tool additions / removals don't break the
 # test, but a regression that drops half the catalogue still fires.
 EXPECTED_MIN_TOOL_COUNT = 30
-PLUGIN_TOOL_COUNT = 72
+PLUGIN_TOOL_COUNT = 71
 REQUIRED_TOOL_NAMES = {
     "analyze_options",
     "get_market_data",
@@ -63,7 +63,6 @@ REQUIRED_TOOL_NAMES = {
     "trading_history",
     "alpha_zoo",
     "alpha_bench",
-    "screen_momentum",
     "analyze_breakout_setup",
 }
 
