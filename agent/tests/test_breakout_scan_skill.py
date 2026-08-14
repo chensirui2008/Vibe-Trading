@@ -1,24 +1,25 @@
-"""Contract tests for the Codex-native breakout-scan plugin skill."""
+"""Contract tests for the bundled breakout-scan skill."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import yaml
 
+from src.agent.skills import SkillsLoader
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLUGIN_ROOT = REPO_ROOT / "plugins" / "vibe-trading"
-SKILL_ROOT = PLUGIN_ROOT / "skills" / "breakout-scan"
+SKILL_ROOT = REPO_ROOT / "agent" / "src" / "skills" / "breakout-scan"
 
 
-def test_plugin_exposes_breakout_scan_skill() -> None:
-    manifest = json.loads(
-        (PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )
-    assert manifest["skills"] == "./skills/"
+def test_bundled_distribution_exposes_breakout_scan_skill() -> None:
     assert (SKILL_ROOT / "SKILL.md").is_file()
+
+
+def test_skills_loader_registers_breakout_scan() -> None:
+    loader = SkillsLoader(user_skills_dir=REPO_ROOT / "agent" / "tests" / "fixtures" / "missing")
+    assert "breakout-scan" in {skill.name for skill in loader.skills}
 
 
 def test_breakout_scan_trigger_and_method_contract() -> None:
@@ -65,8 +66,8 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "breakout_ready",
         "deep_base_drawdown",
         "recent_volatility_expansion",
-        'get_market_data',
-        'max_rows=0',
+        "get_market_data",
+        "max_rows=0",
     )
     for marker in required:
         assert marker in text
@@ -75,8 +76,6 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
 
 
 def test_breakout_scan_allows_implicit_invocation() -> None:
-    metadata = yaml.safe_load(
-        (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
-    )
+    metadata = yaml.safe_load((SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8"))
     assert metadata["policy"]["allow_implicit_invocation"] is True
     assert "$breakout-scan" in metadata["interface"]["default_prompt"]

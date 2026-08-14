@@ -17,7 +17,6 @@
     "market-data",
     "research"
   ],
-  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Vibe-Trading",
@@ -31,7 +30,6 @@
     ],
     "websiteURL": "https://vibetrading.wiki/",
     "defaultPrompt": [
-      "Use breakout-scan to screen US stocks for Qullamaggie breakout candidates.",
       "Use Vibe-Trading to backtest a BTC-USDT strategy.",
       "Use Vibe-Trading to analyze my trade journal."
     ],
