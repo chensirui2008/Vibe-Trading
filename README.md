@@ -1179,6 +1179,26 @@ Posting `{}` schedules a template on its own suggested cadence with its declared
 
 Vibe-Trading exposes 71 MCP tools for any MCP-compatible client. Runs as a stdio subprocess — no server setup needed. Core research tools work with zero API keys for HK/US/crypto; trading connector tools use the selected connector profile, and `run_swarm` needs an LLM key.
 
+### Hermes plugin
+
+This checkout includes a portable [Hermes Agent](https://hermes-agent.nousresearch.com/docs)
+plugin at the repository root. It starts the checked-out project's MCP server
+through `uv`, so no separately installed `vibe-trading-mcp` executable is
+required.
+
+For a local checkout, link it into the normal user-plugin directory and enable
+it once:
+
+```bash
+ln -s "$PWD" ~/.hermes/plugins/vibe-trading
+hermes plugins enable vibe-trading --no-allow-tool-override
+hermes plugins doctor vibe-trading --ci
+```
+
+Hermes then discovers the plugin directly from `~/.hermes/plugins` without
+`HERMES_ENABLE_PROJECT_PLUGINS`. The plugin only registers Vibe-Trading's stdio
+MCP server; it does not enable shell tools or expose broker order placement.
+
 ### Codex local plugin and `@Vibe-Trading`
 
 This repository includes a tool-only Codex plugin under `plugins/vibe-trading`
