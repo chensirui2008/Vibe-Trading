@@ -7,7 +7,9 @@ description: Research, specify, and validate an original U.S.-equity trading str
 
 Build a falsifiable U.S.-equity strategy from first principles and test whether the evidence survives realistic historical validation. The required deliverables are a strategy feasibility report and a detailed strategy playbook.
 
-This is a direct-tool workflow. Do not call `list_skills` or `load_skill`, and do not use any existing Vibe-Trading strategy, factor, technical-analysis, execution, backtest-diagnosis, or report-generation skill. Existing strategies and academic factors may be research subjects or comparison baselines, but their bundled skill instructions must not determine this work.
+Use Vibe-Trading's catalog and tools throughout the workflow. Call `list_skills` first, then use `load_skill` for relevant supporting capabilities such as research discipline, literature or document analysis, data routing, factor research, technical analysis, fundamentals, execution modeling, backtest diagnosis, research goals, and report generation.
+
+Do not load or follow a skill whose primary purpose is to provide a complete ready-made trading strategy, a complete set of entry/exit/sizing rules, or a strategy template that substitutes for original construction in this workflow. This restriction applies to complete-strategy skills only; it does not exclude analytical methods, indicators, factors, data-provider guidance, validation methods, execution assumptions, or reporting support. Use the live skill descriptions to judge the boundary. If a loaded supporting skill recommends a complete-strategy skill, do not follow that recommendation.
 
 ## Scope and intake
 
@@ -31,6 +33,7 @@ Prefer these bundled tools and inspect their live schemas before calling them:
 
 | Stage | Tools | Use |
 | --- | --- | --- |
+| Supporting skill discovery | `list_skills`, `load_skill` | Discover and load useful non-complete-strategy skills; never load a ready-made complete-strategy skill. |
 | Web evidence | `web_search`, `read_url` | Discover sources, then read the actual source rather than relying on snippets. |
 | Academic evidence | `research_papers` | Search arXiv/OpenAlex, read selected records, and separate paper claims from reproduced results. |
 | Symbol and price data | `search_symbol`, `get_market_data` | Resolve tickers and fetch complete OHLCV. For research samples use explicit dates, `interval="1D"`, and `max_rows=0`. |
