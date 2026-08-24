@@ -5,16 +5,17 @@ description: Routes finance and trading-research requests to the right Vibe-Trad
 
 # Use Vibe-Trading
 
-Treat this skill as the router for Vibe-Trading's finance skill catalog. Select the methodology first; call tools only after the relevant skill has been loaded.
+Treat this skill as the router for Vibe-Trading's finance skill catalog. Select the methodology first; call tools only after the relevant skill has been loaded, except for the Codex-only `strategy-research` workflow described below.
 
 ## Routing workflow
 
 1. Extract the task's market, asset class, research objective, required artifact, time horizon, and constraints. Ask only for missing details that would change the skill choice.
-2. Call `list_skills` and treat its current names, descriptions, and categories as the source of truth. Do not rely on a memorized catalog count.
-3. Choose one primary skill whose description most specifically matches the requested outcome. Add a supporting skill only when it owns a separate part of the task.
-4. Call `load_skill` with the exact returned name before doing that part of the work. Continue paginated reads when the loaded content says more remains.
-5. Follow the loaded skill's workflow and use the Vibe-Trading MCP tools it names. Inspect the exposed tool schema instead of inventing arguments.
-6. If no catalog entry matches, use the smallest direct Vibe-Trading tool that satisfies the request and say that no dedicated skill was selected.
+2. If the user requests end-to-end original U.S.-equity strategy research—from external evidence through a fully specified strategy, historical validation, feasibility report, and playbook—use the sibling Codex skill `strategy-research`. Do not call `list_skills`, `load_skill`, or any backend strategy skill for that workflow.
+3. Otherwise, call `list_skills` and treat its current names, descriptions, and categories as the source of truth. Do not rely on a memorized catalog count.
+4. Choose one primary skill whose description most specifically matches the requested outcome. Add a supporting skill only when it owns a separate part of the task.
+5. Call `load_skill` with the exact returned name before doing that part of the work. Continue paginated reads when the loaded content says more remains.
+6. Follow the loaded skill's workflow and use the Vibe-Trading MCP tools it names. Inspect the exposed tool schema instead of inventing arguments.
+7. If no catalog entry matches, use the smallest direct Vibe-Trading tool that satisfies the request and say that no dedicated skill was selected.
 
 Do not load a large bundle of vaguely related skills. A precise primary skill plus zero to two supporting skills is the normal case.
 
@@ -28,7 +29,8 @@ Use this map to form a shortlist, then confirm every name and description with `
 | Company, earnings, or valuation research | `research-discipline` plus the most specific analysis skill | `financial-statement`, `valuation-model`, `earnings-revision`, `earnings-forecast`, `management-deep-dive`, `investor-lenses` |
 | SEC filing research | `edgar-sec-filings` | `sec-edgar` for retrieval; `financial-statement` for statement analysis |
 | Stock screening or watchlists | The exact screen skill | `fundamental-filter`, `sector-rotation`, `breakout-scan`, or `episodic-pivot-scan` according to the requested setup |
-| Create or backtest a strategy | `strategy-generate` | The strategy-family skill; `execution-model` for realistic fills; `backtest-diagnose` only after a failed or weak backtest |
+| Original U.S.-equity strategy research through feasibility report and playbook | Codex-only `strategy-research` | None; it calls Vibe-Trading tools directly and forbids existing strategy skills |
+| Quickly create or backtest a specified strategy | `strategy-generate` | The strategy-family skill; `execution-model` for realistic fills; `backtest-diagnose` only after a failed or weak backtest |
 | Factor or quantitative research | `factor-research` | `alpha-zoo`, `multi-factor`, `quant-statistics`, `ml-strategy`, `correlation-analysis` |
 | Technical analysis | The named technical school | `technical-basic`, `candlestick`, `draw-trendline`, `ichimoku`, `elliott-wave`, `chanlun`, `smc`, or `harmonic` |
 | Portfolio, risk, or hedging | The requested portfolio outcome | `asset-allocation`, `risk-analysis`, `hedging-strategy`, `performance-attribution`, `correlation-regime` |
@@ -55,6 +57,7 @@ When two candidates still overlap, compare their live descriptions from `list_sk
 
 - For investment research, load `research-discipline` before gathering evidence, then load the primary domain skill.
 - For any data fetch or backtest, load `data-routing` before selecting a source.
+- The two rules above do not apply inside `strategy-research`; that Codex-only skill owns evidence gathering, direct tool selection, construction, validation, and both deliverables without loading backend skills.
 - Let each selected skill own a distinct stage: evidence gathering, analysis, strategy construction, validation, or reporting.
 - Load a provider skill only after `data-routing` selects that provider. Do not choose a source merely because its name is familiar.
 - Use `list_swarm_presets` and `run_swarm` only when the user requests a team or the task genuinely needs several independent specialist perspectives. A swarm is not a replacement for skill selection.
