@@ -1,6 +1,7 @@
 ---
 name: breakout-scan
 description: Screen leading US equity sectors first, then select Qullamaggie-style breakout candidates from those sectors using graded evidence from 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising averages, and a breakout above the platform's overall resistance zone. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, compare sector leadership before stock selection, or find setups for a breakout strategy, 突破策略选股, 强势板块突破股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
+category: strategy
 ---
 
 # Breakout Scan

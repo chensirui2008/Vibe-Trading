@@ -1,6 +1,7 @@
 ---
 name: episodic-pivot-scan
 description: Screen US stocks for Qullamaggie-style Episodic Pivot candidates after an unexpected material event, requiring a verified catalyst, a gap of at least 10%, exceptional volume, positive price confirmation, and limited prior 3- to 6-month anticipation. Use when the user asks for 事件驱动交易选股, 事件驱动选股, 财报跳空选股, 重大事件跳空, Episodic Pivot, EP scan, or stocks being repriced after earnings, guidance, FDA, or regulatory news. Do not use for general event research, merger arbitrage, or event-driven portfolio construction without a gap-repricing stock-selection request. This skill selects candidates only; it does not place trades.
+category: strategy
 ---
 
 # Episodic Pivot Scan

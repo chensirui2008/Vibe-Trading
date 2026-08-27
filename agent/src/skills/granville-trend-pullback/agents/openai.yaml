@@ -1,0 +1,7 @@
+interface:
+  display_name: "Granville Trend Pullback"
+  short_description: "Evaluate Granville Rule 2 and 3 pullbacks"
+  default_prompt: "Use $granville-trend-pullback to evaluate whether this stock matches Granville Rule 2 or Rule 3."
+
+policy:
+  allow_implicit_invocation: true
