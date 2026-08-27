@@ -1182,9 +1182,10 @@ Vibe-Trading exposes 71 MCP tools for any MCP-compatible client. Runs as a stdio
 ### Hermes plugin
 
 This checkout includes a portable [Hermes Agent](https://hermes-agent.nousresearch.com/docs)
-plugin at the repository root. It starts the checked-out project's MCP server
-through `uv`, so no separately installed `vibe-trading-mcp` executable is
-required.
+plugin at the repository root that conforms to Agent Plugins v1.0.0. It ships
+the `breakout-scan` and `episodic-pivot-scan` Agent Skills and starts the
+checked-out project's MCP server through `uv`, so no separately installed
+`vibe-trading-mcp` executable is required.
 
 For a local checkout, link it into the normal user-plugin directory and enable
 it once:
@@ -1196,8 +1197,10 @@ hermes plugins doctor vibe-trading --ci
 ```
 
 Hermes then discovers the plugin directly from `~/.hermes/plugins` without
-`HERMES_ENABLE_PROJECT_PLUGINS`. The plugin only registers Vibe-Trading's stdio
-MCP server; it does not enable shell tools or expose broker order placement.
+`HERMES_ENABLE_PROJECT_PLUGINS`. Portable skills are exposed under Hermes'
+deterministic `agent-plugin-vibe-trading-*` namespace, while the stdio MCP
+server exposes Vibe-Trading's research tools. The package does not enable shell
+tools or expose broker order placement.
 
 ### Codex local plugin and `@Vibe-Trading`
 
