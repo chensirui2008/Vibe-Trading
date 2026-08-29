@@ -553,6 +553,7 @@ class TestDisableHttpProxy:
         build_clients.assert_called_once_with()
         assert captured["http_client"] is sync_client
         assert captured["http_async_client"] is async_client
+        assert captured["vibe_owned_http_clients"] == (sync_client, async_client)
         assert "http_socket_options" not in captured
 
     def test_build_llm_leaves_default_transport_when_disabled(self) -> None:
@@ -577,6 +578,7 @@ class TestDisableHttpProxy:
 
         assert "http_client" not in captured
         assert "http_async_client" not in captured
+        assert "vibe_owned_http_clients" not in captured
 
     def test_direct_clients_do_not_install_environment_proxy_mounts(self) -> None:
         import asyncio
@@ -647,7 +649,8 @@ class TestKimiTemperature:
 class TestReasoningEffortPassthrough:
     """LANGCHAIN_REASONING_EFFORT is forwarded as extra_body.reasoning.effort
     to the underlying OpenAI-compatible client. Used for OpenRouter-style
-    relays that require opt-in to enable thinking."""
+    relays that require opt-in to enable thinking when Chat Completions is
+    selected explicitly."""
 
     def _capture(self, env: dict[str, str]) -> dict:
         import src.providers.llm as llm_mod
@@ -683,6 +686,7 @@ class TestReasoningEffortPassthrough:
                 "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
                 "LANGCHAIN_MODEL_NAME": "moonshotai/kimi-k2-thinking",
                 "LANGCHAIN_REASONING_EFFORT": "medium",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
         assert captured["extra_body"] == {"reasoning": {"effort": "medium"}}
@@ -695,6 +699,7 @@ class TestReasoningEffortPassthrough:
                 "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
                 "LANGCHAIN_MODEL_NAME": "moonshotai/kimi-k2-thinking",
                 "LANGCHAIN_REASONING_EFFORT": "HIGH",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
         assert captured["extra_body"]["reasoning"]["effort"] == "high"
@@ -797,6 +802,50 @@ class TestGetLlmCredentials:
         with patch.dict(os.environ, {}, clear=True):
             creds = get_llm_credentials("ollama", "llama3")
             assert creds["api_key"] == "ollama"
+
+    @pytest.mark.parametrize(
+        "configured_url",
+        [
+            "http://localhost:11434",
+            "http://localhost:11434/",
+            "http://localhost:11434/v1",
+            "http://localhost:11434/v1/",
+        ],
+    )
+    def test_ollama_base_url_is_normalized_at_credentials_boundary(
+        self,
+        configured_url: str,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"OLLAMA_BASE_URL": configured_url},
+            clear=True,
+        ):
+            creds = get_llm_credentials("ollama", "llama3")
+
+        assert creds["base_url"] == "http://localhost:11434/v1"
+
+    def test_build_llm_receives_normalized_ollama_base_url(self) -> None:
+        """The runtime constructor must not reintroduce Ollama's raw root (#1069)."""
+        import src.providers.llm as llm_mod
+
+        llm_mod._dotenv_loaded = True
+        captured: dict[str, object] = {}
+
+        class _FakeChatOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+        env = {
+            "LANGCHAIN_PROVIDER": "ollama",
+            "LANGCHAIN_MODEL_NAME": "qwen2.5:3b",
+            "OLLAMA_BASE_URL": "http://localhost:11434",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(llm_mod, "ChatOpenAIWithReasoning", _FakeChatOpenAI):
+                build_llm()
+
+        assert captured["base_url"] == "http://localhost:11434/v1"
 
     def test_base_url_uses_provider_specific_env(self) -> None:
         with patch.dict(

@@ -14,10 +14,12 @@ Conventions, fixed here so callers never have to guess:
   * Nothing is rounded. Rounding is a presentation decision and it destroys the
     vega precision the implied-volatility solver needs.
 
-Degenerate inputs (``T <= 0``, ``sigma <= 0``, ``S <= 0`` or ``K <= 0``) collapse
-the lognormal to a point mass, so the price is the intrinsic value and every
-second-order Greek is zero. They return that rather than raising, because an
-expiring or zero-strike leg is a normal state for a backtest to walk through.
+Degenerate inputs collapse the lognormal to a point mass. At expiry, or for a
+non-positive spot/strike, the price is the immediate intrinsic value. With time
+remaining but ``sigma <= 0``, the terminal spot is deterministic instead, so
+the price is the discounted forward intrinsic value. They return that rather
+than raising, because an expiring or zero-volatility leg is a normal state for a
+backtest to walk through.
 """
 
 from __future__ import annotations
@@ -28,7 +30,16 @@ import numpy as np
 from scipy.optimize import brentq
 from scipy.stats import norm
 
-__all__ = ["bs_price", "bs_greeks", "implied_volatility", "normalise_option_type"]
+__all__ = [
+    "BARRIER_TYPES",
+    "barrier_greeks",
+    "barrier_option_price",
+    "bs_greeks",
+    "bs_price",
+    "implied_volatility",
+    "normalise_barrier_type",
+    "normalise_option_type",
+]
 
 #: Widest volatility the implied-vol search will consider (1000% annualised).
 #: Anything solving above this is an outlier or a bad print, not a vol.
@@ -60,6 +71,52 @@ _CALL_ALIASES: frozenset[str] = frozenset({"call", "calls", "c", "看涨", "认�
 
 #: Spellings folded to ``"put"``. See :data:`_CALL_ALIASES`.
 _PUT_ALIASES: frozenset[str] = frozenset({"put", "puts", "p", "看跌", "认沽"})
+
+
+#: Standard barrier types
+BARRIER_TYPES: tuple[str, ...] = (
+    "down-and-out",
+    "down-and-in",
+    "up-and-out",
+    "up-and-in",
+)
+
+_BARRIER_ALIASES: dict[str, str] = {
+    "down-and-out": "down-and-out",
+    "down_and_out": "down-and-out",
+    "down and out": "down-and-out",
+    "do": "down-and-out",
+    "doc": "down-and-out",
+    "dop": "down-and-out",
+    "down-and-in": "down-and-in",
+    "down_and_in": "down-and-in",
+    "down and in": "down-and-in",
+    "di": "down-and-in",
+    "dic": "down-and-in",
+    "dip": "down-and-in",
+    "up-and-out": "up-and-out",
+    "up_and_out": "up-and-out",
+    "up and out": "up-and-out",
+    "uo": "up-and-out",
+    "uoc": "up-and-out",
+    "uop": "up-and-out",
+    "up-and-in": "up-and-in",
+    "up_and_in": "up-and-in",
+    "up and in": "up-and-in",
+    "ui": "up-and-in",
+    "uic": "up-and-in",
+    "uip": "up-and-in",
+}
+
+
+def normalise_barrier_type(barrier_type: str) -> str:
+    """Fold a barrier-type string to one of :data:`BARRIER_TYPES`."""
+    cleaned = barrier_type.strip().lower()
+    if cleaned in _BARRIER_ALIASES:
+        return _BARRIER_ALIASES[cleaned]
+    raise ValueError(
+        f"unknown barrier type {barrier_type!r}; valid types: {BARRIER_TYPES}"
+    )
 
 
 def normalise_option_type(option_type: str) -> str:
@@ -123,19 +180,24 @@ def _intrinsic(S: float, K: float, option_type: str) -> float:
     return float(max(S - K, 0.0) if option_type == _CALL else max(K - S, 0.0))
 
 
-def _is_degenerate(S: float, K: float, T: float, sigma: float) -> bool:
-    """Report whether the lognormal has collapsed to a point mass.
+def _uses_immediate_intrinsic(S: float, K: float, T: float) -> bool:
+    """Report whether pricing must use immediate intrinsic value.
 
     Args:
         S: Underlying spot price.
         K: Strike price.
         T: Time to expiry in years.
-        sigma: Annualised volatility.
-
     Returns:
-        True when no diffusion remains, so closed-form d1/d2 are undefined.
+        True at/past expiry or when spot/strike makes lognormal pricing
+        undefined.
     """
-    return T <= 0 or sigma <= 0 or S <= 0 or K <= 0
+    return T <= 0 or S <= 0 or K <= 0
+
+
+def _discounted_forward_values(S: float, K: float, T: float, r: float,
+                               q: float) -> tuple[float, float]:
+    """Return discounted spot and strike values for deterministic pricing."""
+    return float(S * np.exp(-q * T)), float(K * np.exp(-r * T))
 
 
 def _d1_d2(S: float, K: float, T: float, r: float, sigma: float,
@@ -172,7 +234,9 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float,
         q: Continuous dividend yield, annualised. Defaults to 0.
 
     Returns:
-        Theoretical option price. Degenerate inputs return intrinsic value.
+        Theoretical option price. Expired inputs return immediate intrinsic
+        value; non-positive volatility with time remaining returns discounted
+        forward intrinsic value.
 
     Raises:
         ValueError: If ``option_type`` is neither call nor put.
@@ -182,8 +246,15 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float,
         10.45
     """
     option_type = normalise_option_type(option_type)
-    if _is_degenerate(S, K, T, sigma):
+    if _uses_immediate_intrinsic(S, K, T):
         return _intrinsic(S, K, option_type)
+    if sigma <= 0:
+        spot_pv, strike_pv = _discounted_forward_values(S, K, T, r, q)
+        return float(
+            max(spot_pv - strike_pv, 0.0)
+            if option_type == _CALL
+            else max(strike_pv - spot_pv, 0.0)
+        )
 
     d1, d2 = _d1_d2(S, K, T, r, sigma, q)
     spot_pv = S * np.exp(-q * T)
@@ -210,17 +281,15 @@ def bs_greeks(S: float, K: float, T: float, r: float, sigma: float,
     Returns:
         Dict with ``delta``, ``gamma``, ``theta``, ``vega`` and ``rho``.
         ``theta`` is per calendar day; ``vega`` and ``rho`` are per 1 percentage
-        point. Degenerate inputs return the point-mass Greeks: delta is 1/0 for
-        a call and 0/-1 for a put depending on moneyness, everything else zero.
-        Exactly at the money the degenerate delta is the limiting value, 0.5 for
-        a call and -0.5 for a put, which is the only pair that keeps put-call
-        delta parity holding at the tie as it does everywhere else.
+        point. Expired inputs return immediate-intrinsic Greeks. Non-positive
+        volatility with time remaining returns the first-order sensitivities of
+        discounted forward intrinsic value, with gamma and vega zero.
 
     Raises:
         ValueError: If ``option_type`` is neither call nor put.
     """
     option_type = normalise_option_type(option_type)
-    if _is_degenerate(S, K, T, sigma):
+    if _uses_immediate_intrinsic(S, K, T):
         # An expiring in-the-money option still has unit exposure to spot, so
         # delta must not be reported as zero here. At S == K the one-sided
         # limits disagree (1 from above, 0 from below for a call), so take the
@@ -233,6 +302,35 @@ def bs_greeks(S: float, K: float, T: float, r: float, sigma: float,
         else:
             delta = -1.0 if S < K else 0.0
         return {"delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0, "rho": 0.0}
+
+    if sigma <= 0:
+        spot_pv, strike_pv = _discounted_forward_values(S, K, T, r, q)
+        forward_moneyness = spot_pv - strike_pv
+        if forward_moneyness == 0:
+            exercise_weight = 0.5
+        elif option_type == _CALL:
+            exercise_weight = 1.0 if forward_moneyness > 0 else 0.0
+        else:
+            exercise_weight = 1.0 if forward_moneyness < 0 else 0.0
+
+        disc_q = float(np.exp(-q * T))
+        rho_scale = K * T * float(np.exp(-r * T)) / 100.0
+        carry = (q * spot_pv - r * strike_pv) / 365.0
+        if option_type == _CALL:
+            delta = exercise_weight * disc_q
+            theta = exercise_weight * carry
+            rho = exercise_weight * rho_scale
+        else:
+            delta = -exercise_weight * disc_q
+            theta = -exercise_weight * carry
+            rho = -exercise_weight * rho_scale
+        return {
+            "delta": float(delta),
+            "gamma": 0.0,
+            "theta": float(theta),
+            "vega": 0.0,
+            "rho": float(rho),
+        }
 
     sqrt_T = float(np.sqrt(T))
     d1, d2 = _d1_d2(S, K, T, r, sigma, q)
@@ -403,3 +501,202 @@ def implied_volatility(market_price: float, S: float, K: float, T: float,
         # the documented contract for that is nan, not an exception escaping
         # from a private implementation detail.
         return float("nan")
+
+
+def barrier_option_price(
+    S: float,
+    K: float,
+    H: float,
+    T: float,
+    r: float,
+    sigma: float,
+    barrier_type: str,
+    option_type: str = "call",
+    q: float = 0.0,
+    rebate: float = 0.0,
+) -> float:
+    """Analytical Black-Scholes pricing for single-barrier options (Reiner-Rubinstein 1991).
+
+    Supports all 8 standard barrier option combinations:
+      * Down-and-out / Down-and-in (Call / Put)
+      * Up-and-out / Up-and-in (Call / Put)
+
+    with continuous monitoring, continuous dividend yield ``q``, and optional
+    expiry cash rebate ``rebate``.
+
+    Satisfies the exact In-Out parity identity:
+        Price(Knock-In) + Price(Knock-Out) = Price(Vanilla) + rebate * exp(-r * T)
+
+    Args:
+        S: Current spot price, strictly positive.
+        K: Strike price, strictly positive.
+        H: Barrier price level, strictly positive.
+        T: Time to expiration in years.
+        r: Continuously compounded risk-free rate.
+        sigma: Annualised volatility.
+        barrier_type: One of :data:`BARRIER_TYPES` (or aliases e.g. ``'down-and-out'``, ``'ui'``).
+        option_type: ``'call'`` or ``'put'``.
+        q: Continuously compounded dividend yield.
+        rebate: Fixed cash rebate paid at expiration if knocked out (or never knocked in).
+
+    Returns:
+        Option price as a non-negative float.
+
+    Raises:
+        ValueError: If S, K, or H <= 0, or barrier_type is unknown.
+    """
+    if S <= 0.0 or K <= 0.0 or H <= 0.0:
+        raise ValueError(f"Spot, strike, and barrier must be strictly positive, got S={S}, K={K}, H={H}")
+
+    b_type = normalise_barrier_type(barrier_type)
+    opt_type = normalise_option_type(option_type)
+
+    # Degenerate expiry or zero/negative volatility
+    if T <= 0.0 or sigma <= 0.0:
+        vanilla = bs_price(S, K, T, r, sigma, opt_type, q)
+        rebate_pv = rebate * float(np.exp(-r * T))
+        is_down = "down" in b_type
+        if T > 0.0 and sigma <= 0.0:
+            F = S * float(np.exp((r - q) * T))
+            breached = (min(S, F) <= H) if is_down else (max(S, F) >= H)
+        else:
+            breached = (S <= H) if is_down else (S >= H)
+        if "out" in b_type:
+            return rebate_pv if breached else vanilla
+        else:  # "in"
+            return vanilla if breached else rebate_pv
+
+    # Check initial boundary conditions
+    is_down = "down" in b_type
+    if is_down and S <= H:
+        if "out" in b_type:
+            return rebate * np.exp(-r * T)
+        else:
+            return bs_price(S, K, T, r, sigma, opt_type, q)
+    elif (not is_down) and S >= H:
+        if "out" in b_type:
+            return rebate * np.exp(-r * T)
+        else:
+            return bs_price(S, K, T, r, sigma, opt_type, q)
+
+    phi = 1.0 if opt_type == _CALL else -1.0
+    eta = 1.0 if is_down else -1.0
+
+    b = r - q
+    sigma_sqrt_T = sigma * np.sqrt(T)
+    mu = (b - 0.5 * sigma**2) / (sigma**2)
+
+    x1 = np.log(S / K) / sigma_sqrt_T + (1.0 + mu) * sigma_sqrt_T
+    x2 = np.log(S / H) / sigma_sqrt_T + (1.0 + mu) * sigma_sqrt_T
+    y1 = np.log(H**2 / (S * K)) / sigma_sqrt_T + (1.0 + mu) * sigma_sqrt_T
+    y2 = np.log(H / S) / sigma_sqrt_T + (1.0 + mu) * sigma_sqrt_T
+
+    df_q = np.exp(-q * T)
+    df_r = np.exp(-r * T)
+    hs_ratio = H / S
+
+    A = phi * S * df_q * norm.cdf(phi * x1) - phi * K * df_r * norm.cdf(phi * (x1 - sigma_sqrt_T))
+    B = phi * S * df_q * norm.cdf(phi * x2) - phi * K * df_r * norm.cdf(phi * (x2 - sigma_sqrt_T))
+    C = phi * S * df_q * (hs_ratio ** (2.0 * (mu + 1.0))) * norm.cdf(eta * y1) - phi * K * df_r * (
+        hs_ratio ** (2.0 * mu)
+    ) * norm.cdf(eta * (y1 - sigma_sqrt_T))
+    D = phi * S * df_q * (hs_ratio ** (2.0 * (mu + 1.0))) * norm.cdf(eta * y2) - phi * K * df_r * (
+        hs_ratio ** (2.0 * mu)
+    ) * norm.cdf(eta * (y2 - sigma_sqrt_T))
+
+    # Cash rebate component
+    if rebate > 0.0:
+        E = rebate * df_r * (norm.cdf(eta * (x2 - sigma_sqrt_T)) - (hs_ratio ** (2.0 * mu)) * norm.cdf(eta * (y2 - sigma_sqrt_T)))
+    else:
+        E = 0.0
+
+    if opt_type == _CALL:
+        if b_type == "down-and-out":
+            price = (A - C + (rebate * df_r - E)) if K >= H else (B - D + (rebate * df_r - E))
+        elif b_type == "down-and-in":
+            price = (C + E) if K >= H else (A - B + D + E)
+        elif b_type == "up-and-out":
+            price = (rebate * df_r - E) if K >= H else (A - B + C - D + (rebate * df_r - E))
+        elif b_type == "up-and-in":
+            price = (A + E) if K >= H else (B - C + D + E)
+        else:
+            raise ValueError(f"Unhandled barrier type {b_type}")
+    else:  # PUT
+        if b_type == "down-and-out":
+            price = (A - B + C - D + (rebate * df_r - E)) if K >= H else (rebate * df_r - E)
+        elif b_type == "down-and-in":
+            price = (B - C + D + E) if K >= H else (A + E)
+        elif b_type == "up-and-out":
+            price = (B - D + (rebate * df_r - E)) if K >= H else (A - C + (rebate * df_r - E))
+        elif b_type == "up-and-in":
+            price = (A - B + D + E) if K >= H else (C + E)
+        else:
+            raise ValueError(f"Unhandled barrier type {b_type}")
+
+    return float(max(0.0, price))
+
+
+
+def barrier_greeks(
+    S: float,
+    K: float,
+    H: float,
+    T: float,
+    r: float,
+    sigma: float,
+    barrier_type: str,
+    option_type: str = "call",
+    q: float = 0.0,
+    rebate: float = 0.0,
+) -> dict[str, float]:
+    """Compute sensitivity Greeks for single-barrier options via central finite differences.
+
+    Matches the conventions of :func:`bs_greeks`:
+      * delta: per 1.0 of spot
+      * gamma: per 1.0 of spot squared
+      * theta: per calendar day (1/365)
+      * vega: per 1 percentage point of volatility (0.01)
+      * rho: per 1 percentage point of interest rate (0.01)
+
+    Args:
+        S, K, H, T, r, sigma, barrier_type, option_type, q, rebate: Standard barrier inputs.
+
+    Returns:
+        dict with keys: ``delta``, ``gamma``, ``theta``, ``vega``, ``rho``.
+    """
+    p = barrier_option_price(S, K, H, T, r, sigma, barrier_type, option_type, q, rebate)
+
+    dS = max(1e-4, 1e-4 * S)
+    p_up = barrier_option_price(S + dS, K, H, T, r, sigma, barrier_type, option_type, q, rebate)
+    p_down = barrier_option_price(S - dS, K, H, T, r, sigma, barrier_type, option_type, q, rebate)
+
+    delta = float((p_up - p_down) / (2.0 * dS))
+    gamma = float((p_up - 2.0 * p + p_down) / (dS**2))
+
+    # Theta (per calendar day): time decay moves forward, so T - dt
+    dt = 1.0 / 365.0
+    if T > dt:
+        p_dt = barrier_option_price(S, K, H, T - dt, r, sigma, barrier_type, option_type, q, rebate)
+        theta = float(p_dt - p)
+    else:
+        theta = 0.0
+
+    # Vega (per 1 percentage point = 0.01)
+    dvol = 1e-4
+    p_vol_up = barrier_option_price(S, K, H, T, r, sigma + dvol, barrier_type, option_type, q, rebate)
+    p_vol_down = barrier_option_price(S, K, H, T, r, max(1e-6, sigma - dvol), barrier_type, option_type, q, rebate)
+    vega = float((p_vol_up - p_vol_down) / (2.0 * dvol) * 0.01)
+
+    # Rho (per 1 percentage point = 0.01)
+    dr = 1e-4
+    p_r_up = barrier_option_price(S, K, H, T, r + dr, sigma, barrier_type, option_type, q, rebate)
+    p_r_down = barrier_option_price(S, K, H, T, r - dr, sigma, barrier_type, option_type, q, rebate)
+    rho = float((p_r_up - p_r_down) / (2.0 * dr) * 0.01)
+
+    return {
+        "delta": delta,
+        "gamma": gamma,
+        "theta": theta,
+        "vega": vega,
+        "rho": rho,
+    }

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -20,6 +19,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from src.config.accessor import get_env_config
 from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 CONFIG_FILENAME = "etoro.json"
 BASE_URL = "https://public-api.etoro.com"
 PAPER_GUARD = "path_separated_key_bound"
+
+# Market-data routes are profile-neutral (no demo/real path prefix).
+MARKET_DATA_INSTRUMENTS_PATH = "/api/v1/market-data/instruments"
+MARKET_DATA_INSTRUMENT_TYPES_PATH = "/api/v1/market-data/instrument-types"
+MARKET_DATA_RATES_PATH = "/api/v1/market-data/instruments/rates"
+MARKET_DATA_SEARCH_PATH = "/api/v1/market-data/search"
 
 PROFILE_ENVIRONMENTS = {
     "paper": "paper",
@@ -111,10 +117,14 @@ class EtoroConfig:
 
 
 _OVERRIDE_KEYS = ("api_key", "user_key", "profile")
-_ENV_KEY_MAP = {
-    "api_key": "ETORO_API_KEY",
-    "user_key": "ETORO_USER_KEY",
-}
+
+
+def _environment_values() -> dict[str, str]:
+    data = get_env_config().data
+    return {
+        "api_key": str(data.etoro_api_key or "").strip(),
+        "user_key": str(data.etoro_user_key or "").strip(),
+    }
 
 
 def build_config(
@@ -145,8 +155,7 @@ def load_config() -> EtoroConfig:
             base = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise EtoroConfigError(f"invalid eToro config at {path}: {exc}") from exc
-    for field, env_name in _ENV_KEY_MAP.items():
-        env_val = os.getenv(env_name, "").strip()  # noqa: env-gate — connector credential helper
+    for field, env_val in _environment_values().items():
         if env_val:
             base[field] = env_val
     if not base:
@@ -173,6 +182,30 @@ def _missing_fields(cfg: EtoroConfig) -> list[str]:
     if not cfg.user_key:
         missing.append("user_key")
     return missing
+
+
+def credential_source() -> str | None:
+    """Return where credentials were loaded from for runtime UI metadata."""
+    path = config_path()
+    file_present = False
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if str(data.get("api_key") or "").strip() or str(data.get("user_key") or "").strip():
+                file_present = True
+        except (OSError, ValueError, json.JSONDecodeError):
+            file_present = False
+    if any(_environment_values().values()):
+        return "environment"
+    if file_present:
+        return "runtime_file"
+    return None
+
+
+def _missing_credential_code(cfg: EtoroConfig) -> str:
+    if cfg.api_key or cfg.user_key:
+        return "credentials_partial"
+    return "credentials_missing"
 
 
 def public_config(cfg: EtoroConfig) -> dict[str, Any]:
@@ -211,8 +244,28 @@ def positions_root(cfg: EtoroConfig) -> str:
     return "/api/v2/trading/demo" if cfg.is_paper else "/api/v2/trading"
 
 
+COPY_TRADING_PAPER_UNSUPPORTED = (
+    "eToro Public API copy trading is not available on demo (paper) accounts. "
+    "Use a live profile (e.g. etoro-live-trade) with a real account."
+)
+
+
 def copy_root(cfg: EtoroConfig) -> str:
-    return "/api/v2/trading/copy/demo" if cfg.is_paper else "/api/v2/trading/copy"
+    """Copy-trading routes share one path for demo and real (no ``/demo`` prefix).
+
+    Every other root above encodes paper/live in the path, which is half of this
+    connector's ``path_separated_key_bound`` guard. Copy has no demo path to
+    encode, so for this one surface the guard has to be a refusal instead: a
+    paper config has no legitimate copy route, and handing it the real one would
+    point demo credentials at a live endpoint. Raising here keeps that
+    structural rather than leaving each call site to remember it.
+
+    Raises:
+        EtoroConfigError: If ``cfg`` targets the demo (paper) environment.
+    """
+    if cfg.is_paper:
+        raise EtoroConfigError(COPY_TRADING_PAPER_UNSUPPORTED)
+    return "/api/v2/trading/copy"
 
 
 class EtoroClient:
