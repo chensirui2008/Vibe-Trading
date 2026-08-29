@@ -1,6 +1,6 @@
 ---
 name: breakout-scan
-description: Screen leading US equity sectors first, then select Qullamaggie-style breakout candidates from those sectors using graded evidence from 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising averages, and a breakout above the platform's overall resistance zone. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, compare sector leadership before stock selection, or find setups for a breakout strategy, 突破策略选股, 强势板块突破股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
+description: Screen leading US equity sectors first, then select Qullamaggie-style breakout candidates from those sectors using graded long-term trend evidence (price relative to SMA200 and whether SMA200 is flat or rising), 1-, 3-, and 6-month relative strength, a tightening base, higher lows, contracting volume, rising short-term averages, and a breakout above the platform's overall resistance zone. Treat the strategy's numeric parameters as an ideal template rather than all-or-nothing gates. Use whenever the user asks to select stocks, scan candidates, build a watchlist, compare sector leadership before stock selection, or find setups for a breakout strategy, 突破策略选股, 强势板块突破股, 强势股平台突破, 突破候选, or Qullamaggie breakout. This skill is for candidate selection, not entry timing or order placement.
 category: strategy
 ---
 
@@ -52,14 +52,15 @@ ETF 价格只用于衡量板块表现，不能自动证明个股归属。必须�
 
 1. 记录原始股票池来源、成分日期、行业分类标准和映射日期；将原始股票池与入选板块取交集，得到 `eligible_sector_universe`。报告原始总数、有效行业映射数、未映射代码、板块过滤后数量及每个入选板块的数量。
 2. 行业标签为空、无法与 11 大板块对齐或无法确认类型的代码进入 `unmapped_symbols`，不得猜测归属。若行业映射不可审计，停止并返回 `无法完成可靠筛选`。
-3. 仅对 `eligible_sector_universe` 中每个代码调用 `get_market_data` 取得至少 150 个完整交易日的复权日线 OHLCV，使用 `source="auto"`、`interval="1D"`、`max_rows=0`。
+3. 仅对 `eligible_sector_universe` 中每个代码调用 `get_market_data` 取得至少 260 个完整交易日的复权日线 OHLCV，使用 `source="auto"`、`interval="1D"`、`max_rows=0`。
 4. 锁定共同完整交易日，检查重复日期、非递增日期、缺失 OHLCV、非正价格和覆盖不足。任何失败进入 `failed_symbols`；不得用零值、前值填充或其他代码替代。
 5. 若批量调用存在返回条数上限，先验证上限是每个代码还是整次请求。分批时保持同一截止日和同一口径；不同来源不一致时报告差异，不得拼接。
-6. 在同一 `eligible_sector_universe` 和共同截止日上计算三个周期的横截面排名，只保留任一周期前 10% 的并集继续检查。前 1%/2% 是强度标签，不是淘汰线。所有名次和分母均以该板块过滤后股票池为准，不得宣称为全市场百分位。
-7. 对每个候选先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得看到结果后移动起点来提高评级。
-8. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论，也不得在参数和外部状态未改变时无条件重试。
+6. 对数据有效的每个代码计算 `SMA200[t]` 和 `SMA200[t-20]`，将长期趋势证据标为 `ideal/acceptable/weak/unknown` 并纳入综合评级：价格高于 SMA200 且 SMA200 最近 20 日向上或走平为 `ideal`；仅满足其中一项为 `acceptable`；两项均不满足为 `weak`；无法计算为 `unknown`。任何等级都不得仅凭此项直接排除，必须报告实测值和偏离方向。
+7. 在完整的 `eligible_sector_universe` 和共同截止日上计算三个周期的横截面排名，只保留任一周期前 10% 的并集继续检查。前 1%/2% 是强度标签，不是额外淘汰线。所有名次和分母均以该板块过滤后股票池为准，不得宣称为全市场百分位。
+8. 对每个候选先根据图形提出并固定 `platform_start`，然后必须调用 `analyze_breakout_setup(symbol=..., platform_start=..., as_of=...)`。不得看到结果后移动起点来提高评级。
+9. 工具失败或数据不足时标为 `unknown` / `needs_review`，不得退回宽松目测结论，也不得在参数和外部状态未改变时无条件重试。
 
-### 3. 板块内相对强度初筛
+### 3. 板块内相对强度与长期均线初筛
 
 在每只股票最后一个共同有效交易日计算：
 
@@ -67,9 +68,18 @@ ETF 价格只用于衡量板块表现，不能自动证明个股归属。必须�
 R21  = Close[t] / Close[t-21]  - 1
 R63  = Close[t] / Close[t-63]  - 1
 R126 = Close[t] / Close[t-126] - 1
+SMA200[t] = mean(Close[t-199:t])
+SMA200_20d_change = SMA200[t] / SMA200[t-20] - 1
 ```
 
-分别在同一 `eligible_sector_universe` 内按 `R21`、`R63`、`R126` 降序做百分位排名：
+将 `Close[t] > SMA200[t]` 且 `SMA200_20d_change >= 0` 作为理想长期趋势证据，而不是硬过滤。必须使用与收益率相同的复权收盘价和共同截止日；不得用盘中价、未复权价或视觉判断替代。按以下规则评级并纳入整体形态判断：
+
+- `ideal`：价格高于 SMA200，且 SMA200 最近 20 日向上或走平；
+- `acceptable`：两项中仅一项满足；
+- `weak`：价格不高于 SMA200，且 SMA200 最近 20 日向下；
+- `unknown`：数据不足，必须作为数据完整度负面项，不得当作通过。
+
+不得因长期均线单项为 `acceptable`、`weak` 或 `unknown` 就直接移出观察池；必须与相对强度、平台收窄、量价、冲击恢复和阻力带质量共同形成评级。随后在同一 `eligible_sector_universe` 内按 `R21`、`R63`、`R126` 降序做百分位排名：
 
 - 核心标签：任一周期进入前 1%。
 - 强势标签：未进前 1%，但任一周期进入前 2%。
@@ -97,8 +107,9 @@ R126 = Close[t] / Close[t-126] - 1
 3. **低点抬高**：排除最新评估日后，把平台形成期按交易日分为前后两半；后半段最低 `Low` 严格高于前半段最低 `Low` 时，记为低点抬高。必须同时展示两半最低值和变化幅度；不使用 3-3 摆动低点。
 4. **成交量收缩**：理想状态是平台后半段成交量中位数不高于前半段的 `90%`。单日异常量必须单列说明，不能只用中位数掩盖事件冲击。
 5. **冲击后重新稳定**：若平台内出现 `normalized_TR >= 前20日中位数的2倍`，则该日记为价格冲击日。理想恢复状态是冲击后已有至少 10 个完整交易日，且最近 5 日 normalized TR 中位数低于冲击前 20 日中位数。恢复不足是重要反证，通常降为 `developing` 或 `not_a_setup`，但不得假装冲击不存在。
-6. **均线向上**：理想状态是 10 日和 20 日均线上升，价格主要运行在其附近或上方；偶尔回踩 50 日线不自动淘汰。均线未完全转向时降低评级，不直接排除。
-7. **明确且仍有效的平台上沿价格带**：固定 `platform_start` 后，排除最新评估日，只使用平台形成期最高四分位的 `High` 作为候选。将相对代表价相差不超过 `2%` 的候选高点聚为一簇；至少包含两个不同交易日触碰才有效。先选触碰次数最多的有效簇，次数相同则选择代表价更高的簇。价格带下边界、上边界分别为该簇最低和最高 `High`，代表价为中位数。不得用单个极值、任意近期最高价或 3-3 pivot 代替平台整体上沿。
+6. **短期均线向上**：理想状态是 10 日和 20 日均线上升，价格主要运行在其附近或上方；偶尔回踩 50 日线不自动淘汰。短期均线未完全转向时降低评级，不直接排除。
+7. **长期均线趋势证据**：检查 `Close[t] > SMA200[t]` 且 `SMA200[t] >= SMA200[t-20]`，展示最新收盘、两期 SMA200 和 20 日变化率，并按 `ideal/acceptable/weak/unknown` 评级。该项参与综合判断但不单独淘汰；若整体仍评为 `ideal` 或 `acceptable`，必须解释其他结构证据为何足以抵消长期均线偏离。
+8. **明确且仍有效的平台上沿价格带**：固定 `platform_start` 后，排除最新评估日，只使用平台形成期最高四分位的 `High` 作为候选。将相对代表价相差不超过 `2%` 的候选高点聚为一簇；至少包含两个不同交易日触碰才有效。先选触碰次数最多的有效簇，次数相同则选择代表价更高的簇。价格带下边界、上边界分别为该簇最低和最高 `High`，代表价为中位数。不得用单个极值、任意近期最高价或 3-3 pivot 代替平台整体上沿。
 
 阻力带拟合必须排除最新完整交易日，避免突破 K 线抬高自己的门槛。最新日 `Close > zone_upper` 才算已突破；仅 `High > zone_upper` 而收盘未站上时只能标记为盘中测试或假突破风险。没有至少两次有效触碰时标为 `developing`，工具应返回 `no_valid_resistance_zone`，不得猜测价格带。
 
@@ -127,9 +138,10 @@ distance_to_zone_upper = Close[t] / zone_upper - 1
 
 1. 整体形态评级：`ideal`、`acceptable`、`developing`；
 2. 平台收窄、低点、量价和冲击恢复的结构质量；
-3. 进入前 1%/2% 的周期数及三个周期的原始名次；
-4. 距阻力带上边界的绝对距离与价格带有效性；
-5. 数据完整度。
+3. 长期均线趋势证据（价格相对 SMA200 及 SMA200 的 20 日方向）；
+4. 进入前 1%/2% 的周期数及三个周期的原始名次；
+5. 距阻力带上边界的绝对距离与价格带有效性；
+6. 数据完整度。
 
 不得把成交量放大作为候选期硬门槛；突破日放量属于触发验证，不属于本 skill 的平台选股条件。
 
@@ -148,8 +160,11 @@ distance_to_zone_upper = Close[t] / zone_upper - 1
 ```markdown
 ## 突破候选（as of YYYY-MM-DD）
 
-| 排名 | 代码 | 板块 | 评级 | 状态 | R21名次 | R63名次 | R126名次 | 上涨段 | 平台天数 | 上沿价格带 | 距上边界 | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | 主要偏离/反证 |
-|---:|---|---|---|---|---:|---:|---:|---|---:|---|---:|---|---|---|---|---|
+| 排名 | 代码 | 板块 | 评级 | 状态 | R21名次 | R63名次 | R126名次 | 收盘/SMA200 | SMA200 20日变化 | 上涨段 | 平台天数 | 上沿价格带 | 距上边界 | 深度/宽度 | 波幅收窄 | 量缩 | 事件稳定 | 主要偏离/反证 |
+|---:|---|---|---|---|---:|---:|---:|---|---:|---|---:|---|---:|---|---|---|---|---|
+
+### 长期均线证据明细
+| 代码 | 收盘 | SMA200 | SMA200[t-20] | SMA200 20日变化 | 证据等级 | 对综合评级的影响 |
 
 ### 发展中或不构成形态的股票
 | 代码 | 评级 | 仍可取之处 | 主要偏离或整体反证 |
@@ -162,11 +177,11 @@ distance_to_zone_upper = Close[t] / zone_upper - 1
 - 板块代理、基准与数据源：
 - 原始股票池及成分日期：
 - 行业映射来源、标准与日期：
-- 原始总数 / 有效行业映射 / 板块过滤后 / 成功 / 失败：
+- 原始总数 / 有效行业映射 / 板块过滤后 / SMA200 ideal / acceptable / weak / unknown / 成功 / 失败：
 - 数据源与复权口径：
 - 未映射代码：
 - 失败代码：
-- 操作化定义：Sector ETF 的 21/63/126 日加权名次 50%/30%/20%、超额收益至少 2 个周期为正、最多 5 个板块、顶部 25% High、2% 聚类容差、至少 2 次触碰、排除评估日、收盘突破上边界、5% ready 阈值及任何用户覆盖值
+- 操作化定义：Sector ETF 的 21/63/126 日加权名次 50%/30%/20%、超额收益至少 2 个周期为正、最多 5 个板块、SMA200 证据分级（`Close[t] > SMA200[t]`、`SMA200[t] >= SMA200[t-20]`，不单项淘汰）、顶部 25% High、2% 聚类容差、至少 2 次触碰、排除评估日、收盘突破上边界、5% ready 阈值及任何用户覆盖值
 ```
 
 每个入选项都要给出可核查的日期和数值证据。偏离项必须给出实测值和理想参考值，例如 `platform_max_drawdown=27%，高于理想值15%`，并解释它是可接受偏离还是足以推翻形态的反证，不得只写“形态较弱”。将结果称为研究/观察名单，不作保证收益或直接买入建议。

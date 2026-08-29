@@ -30,6 +30,13 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         "R21",
         "R63",
         "R126",
+        "至少 260 个完整交易日",
+        "SMA200[t] = mean(Close[t-199:t])",
+        "Close[t] > SMA200[t]",
+        "SMA200[t] >= SMA200[t-20]",
+        "长期均线证据明细",
+        "不得因长期均线单项",
+        "不单项淘汰",
         "SPDR 11 大行业 ETF",
         "XLRE",
         "SPY",
@@ -73,6 +80,8 @@ def test_breakout_scan_trigger_and_method_contract() -> None:
         assert marker in text
 
     assert "默认用 `3-3 pivot`" not in text
+    assert "long_ma_rejected" not in text
+    assert "sma200_eligible_universe" not in text
 
 
 def test_breakout_scan_allows_implicit_invocation() -> None:
