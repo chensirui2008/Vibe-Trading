@@ -1,0 +1,41 @@
+{
+  "name": "vibe-trading",
+  "version": "0.1.13+codex.20260822133343",
+  "description": "Finance research, market data, backtesting, and portfolio analysis in Codex.",
+  "author": {
+    "name": "HKUDS",
+    "email": "hkuds@connect.hku.hk",
+    "url": "https://github.com/HKUDS"
+  },
+  "homepage": "https://vibetrading.wiki/",
+  "repository": "https://github.com/HKUDS/Vibe-Trading",
+  "license": "MIT",
+  "keywords": [
+    "finance",
+    "trading",
+    "backtesting",
+    "market-data",
+    "research"
+  ],
+  "skills": "./plugins/vibe-trading/skills/",
+  "mcpServers": "./mcp.json",
+  "interface": {
+    "displayName": "Vibe-Trading",
+    "shortDescription": "Finance research and backtesting tools for Codex.",
+    "longDescription": "Use Vibe-Trading's 71 MCP tools for cross-market data, breakout-setup analysis, fundamentals, quantitative research, backtesting, research goals, journal analysis, shadow accounts, and read-only broker inspection. The plugin does not expose order placement or cancellation.",
+    "developerName": "HKUDS",
+    "category": "Finance",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://vibetrading.wiki/",
+    "defaultPrompt": [
+      "Use Vibe-Trading to backtest a BTC-USDT strategy.",
+      "Use Vibe-Trading to analyze my trade journal."
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./plugins/vibe-trading/assets/icon.png",
+    "logo": "./plugins/vibe-trading/assets/icon.png"
+  }
+}

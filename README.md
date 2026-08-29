@@ -1338,24 +1338,25 @@ tools or expose broker order placement.
 
 ### Codex local plugin and `@Vibe-Trading`
 
-This repository includes a tool-only Codex plugin under `plugins/vibe-trading`
-and a repo marketplace at `.agents/plugins/marketplace.json`. It reuses the
-same stdio MCP server; it does not add a separate web service or custom
-chat widget.
+The Agent Plugins package at the repository root also includes a Codex extension
+manifest at `.codex-plugin/plugin.json` and a repo marketplace at
+`.agents/plugins/marketplace.json`. Both Hermes and Codex therefore load the
+same root `plugin.json` / `mcp.json` package and the same stdio MCP server; no
+separate web service or custom chat widget is added.
 
-Install the current checkout as a user-visible CLI, then add the repo
-marketplace and plugin:
+Add the repo marketplace and plugin directly from the current checkout:
 
 ```bash
-uv tool install --editable .
 codex plugin marketplace add /absolute/path/to/Vibe-Trading
 codex plugin add vibe-trading@vibe-trading-local
 ```
 
 Restart the ChatGPT desktop app, start a new Codex task, type `@`, and select
-**Vibe-Trading**. The plugin fails fast if `vibe-trading-mcp` is not available
-on `PATH`. After changing the plugin manifest or MCP metadata, reinstall the
-plugin and start a new task so Codex reloads the descriptors.
+**Vibe-Trading**. The MCP profile runs `uv run --project ... python -c ...` and
+imports `agent/mcp_server.py` directly, so it does not depend on a pre-existing
+`vibe-trading-mcp` entry point or editable installation. After changing the
+plugin manifest or MCP metadata, reinstall the plugin and start a new task so
+Codex reloads the descriptors.
 
 **Environment variables:** the client spawns the server itself, so a shell `export` never reaches it — set them in the client's `env` block. Generated backtest code is sandboxed to the allowed run roots, so writing results into a workspace of your own needs `VIBE_TRADING_ALLOWED_RUN_ROOTS`:
 
@@ -1363,7 +1364,12 @@ plugin and start a new task so Codex reloads the descriptors.
 {
   "mcpServers": {
     "vibe-trading": {
-      "command": "vibe-trading-mcp",
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run", "--project", "${PLUGIN_ROOT}", "python", "-c",
+        "import sys; sys.path.insert(0, '${PLUGIN_ROOT}/agent'); from mcp_server import main; main()"
+      ],
       "env": { "VIBE_TRADING_ALLOWED_RUN_ROOTS": "C:\\Users\\me\\research" }
     }
   }

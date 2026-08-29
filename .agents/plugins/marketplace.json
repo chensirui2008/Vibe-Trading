@@ -8,7 +8,7 @@
       "name": "vibe-trading",
       "source": {
         "source": "local",
-        "path": "./plugins/vibe-trading"
+        "path": "."
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -1,9 +1,18 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
     "vibe-trading": {
-      "command": "vibe-trading-mcp",
-      "args": [],
-      "tool_timeout_sec": 900
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${PLUGIN_ROOT}/../..",
+        "python",
+        "-c",
+        "import sys; sys.path.insert(0, '${PLUGIN_ROOT}/../../agent'); from mcp_server import main; main()"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }

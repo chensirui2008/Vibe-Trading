@@ -6,8 +6,13 @@
       "command": "uv",
       "args": [
         "run",
-        "vibe-trading-mcp"
-      ]
+        "--project",
+        "${PLUGIN_ROOT}",
+        "python",
+        "-c",
+        "import sys; sys.path.insert(0, '${PLUGIN_ROOT}/agent'); from mcp_server import main; main()"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }
